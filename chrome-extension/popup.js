@@ -98,6 +98,14 @@ function updateEmulateBtnUI() {
 // Check state on load
 checkEmulationState();
 
+const downloadCheck = document.getElementById("downloadCheck");
+chrome.storage.local.get("downloadInstead", (data) => {
+  downloadCheck.checked = !!data.downloadInstead;
+});
+downloadCheck.addEventListener("change", () => {
+  chrome.storage.local.set({ downloadInstead: downloadCheck.checked });
+});
+
 document.getElementById("emulateBtn").addEventListener("click", async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus("No active tab.", "err");
@@ -130,9 +138,10 @@ document.getElementById("pickBtn").addEventListener("click", async () => {
   if (!ok) return;
 
   const didEmulate = await applyViewportResize(tab);
+  const downloadInstead = downloadCheck.checked;
 
   setStatus("Click any element… (Esc to cancel)");
-  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate }, () => {
+  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead }, () => {
     if (chrome.runtime.lastError) {}
     window.close();
   });
@@ -148,6 +157,8 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
   const didEmulate = await applyViewportResize(tab);
 
   setStatus("Capturing…", "loading");
+  const downloadInstead = downloadCheck.checked;
+  
   chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE" }, async (response) => {
     if (didEmulate) {
       chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
@@ -159,10 +170,21 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
     }
     try {
       const json = JSON.stringify(response.data);
-      await navigator.clipboard.writeText(json);
-      setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+      if (downloadInstead) {
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "figcopy-layout.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        setStatus(`Downloaded! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+      } else {
+        await navigator.clipboard.writeText(json);
+        setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+      }
     } catch (e) {
-      setStatus("Captured, but clipboard write failed.", "err");
+      setStatus("Captured, but write failed.", "err");
     }
   });
 });

@@ -323,6 +323,7 @@
   let hoverBox = null;
   let picking = false;
   let didEmulateGlobal = false;
+  let downloadInsteadGlobal = false;
   let onPicked = null;
 
   function ensureHoverBox() {
@@ -397,12 +398,27 @@
     stopPicking();
     const data = captureElement(target);
     const json = JSON.stringify(data);
-    // Write to clipboard here, inside the same user-gesture (click), since the
-    // extension popup will already have closed by this point.
-    navigator.clipboard.writeText(json).then(
-      () => showToast(`Copied "${target.tagName.toLowerCase()}" layout — paste into the Figma plugin`),
-      () => showToast("Couldn't copy automatically — check console for the JSON")
-    );
+    // Write to clipboard or download JSON file, inside the same user-gesture (click), 
+    // since the extension popup will already have closed by this point.
+    if (downloadInsteadGlobal) {
+      try {
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "figcopy-layout.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);
+      } catch (e) {
+        showToast("Couldn't download automatically — check console for the JSON", "err");
+      }
+    } else {
+      navigator.clipboard.writeText(json).then(
+        () => showToast(`Copied "${target.tagName.toLowerCase()}" layout — paste into the Figma plugin`),
+        () => showToast("Couldn't copy automatically — check console for the JSON", "err")
+      );
+    }
     if (onPicked) onPicked(data);
   }
 
@@ -521,6 +537,7 @@
     }
     if (msg.type === "START_PICKER") {
       didEmulateGlobal = msg.didEmulate || false;
+      downloadInsteadGlobal = msg.downloadInstead || false;
       startPicking(() => {
         // Clipboard write already happened inside onClick, above.
       });

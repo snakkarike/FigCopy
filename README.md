@@ -1,8 +1,8 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="Logo-Dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="Logo-Light.png">
-    <img src="Logo-Light.png" alt="FigCopy Logo" height="60" />
+    <source media="(prefers-color-scheme: dark)" srcset="assets/Logo-Dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/Logo-Light.png">
+    <img src="assets/Logo-Light.png" alt="FigCopy Logo" height="60" />
   </picture>
 </div>
 

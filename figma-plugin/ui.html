@@ -117,6 +117,11 @@
       color: #bbb;
     }
 
+    .textarea-wrap.drag-over textarea {
+      background: rgba(128, 128, 128, 0.1);
+      border-color: var(--text);
+    }
+
     /* Paste hint overlay — shown when textarea is empty and focused */
     .paste-hint {
       position: absolute;
@@ -219,14 +224,18 @@
 
   <div class="body">
     <p class="hint">Click in the box and press <strong>Ctrl+V</strong> (or ⌘V) to paste JSON from the extension, then build.</p>
-    <div class="textarea-wrap">
+    <div class="textarea-wrap" id="dropZone">
       <textarea id="jsonBox" placeholder='{"version":1,"root":{...}}'></textarea>
       <div class="paste-hint">
         <span class="key">Ctrl + V</span>
-        <span class="key-label">Paste JSON here</span>
+        <span class="key-label" id="hintLabel">Paste or Drop JSON</span>
       </div>
     </div>
-    <button class="build-btn" id="buildBtn">Build in Figma</button>
+    <div style="display: flex; gap: 8px;">
+      <button class="build-btn" id="buildBtn" style="flex: 2;">Build in Figma</button>
+      <button class="build-btn" id="uploadBtn" style="flex: 1; background: var(--bg); color: var(--text); border-color: var(--border);">Upload .json</button>
+    </div>
+    <input type="file" id="fileInput" accept=".json" style="display: none;">
   </div>
 
   <div class="status-bar" id="statusBar">
@@ -239,30 +248,67 @@
     const statusBar = document.getElementById("statusBar");
     const statusText = document.getElementById("statusText");
     const buildBtn = document.getElementById("buildBtn");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const fileInput = document.getElementById("fileInput");
+    const dropZone = document.getElementById("dropZone");
 
     function setStatus(text, kind) {
       statusText.textContent = text;
       statusBar.className = "status-bar" + (kind ? " " + kind : "");
     }
 
+    function processJsonString(val) {
+      if (!val) return;
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed.root) {
+          setStatus(`Ready — ${(val.length / 1024).toFixed(1)} KB loaded. Click Build.`, "ok");
+          box.classList.add("ready");
+          box.value = val;
+        } else {
+          setStatus('Loaded, but missing "root" key — check file format.', "err");
+        }
+      } catch (e) {
+        setStatus("Content is not valid JSON.", "err");
+      }
+    }
+
     // Auto-detect paste into the textarea — no clipboard API needed
     box.addEventListener("paste", (e) => {
-      // Let the native paste happen first, then validate on next tick
       setTimeout(() => {
-        const val = box.value.trim();
-        if (!val) return;
-        try {
-          const parsed = JSON.parse(val);
-          if (parsed.root) {
-            setStatus(`Ready — ${(val.length / 1024).toFixed(1)} KB pasted. Click Build.`, "ok");
-            box.classList.add("ready");
-          } else {
-            setStatus('Pasted, but missing "root" key — copy from the extension.', "err");
-          }
-        } catch (e) {
-          setStatus("Pasted content is not valid JSON.", "err");
-        }
+        processJsonString(box.value.trim());
       }, 0);
+    });
+
+    // File Upload via Button
+    uploadBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (re) => processJsonString(re.target.result.trim());
+      reader.readAsText(file);
+      fileInput.value = ""; // reset
+    });
+
+    // Drag and Drop
+    document.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("drag-over");
+    });
+    document.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+    });
+    document.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        const reader = new FileReader();
+        reader.onload = (re) => processJsonString(re.target.result.trim());
+        reader.readAsText(file);
+      }
     });
 
     box.addEventListener("input", () => {
