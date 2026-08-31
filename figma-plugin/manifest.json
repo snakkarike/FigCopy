@@ -7,6 +7,6 @@
   "editorType": ["figma"],
   "networkAccess": {
     "allowedDomains": ["*"],
-    "reasoning": "Need to fetch images from arbitrary websites during copy/paste"
+    "reasoning": "Needs to fetch images from local dev servers (localhost/LAN) as well as arbitrary websites during capture"
   }
 }

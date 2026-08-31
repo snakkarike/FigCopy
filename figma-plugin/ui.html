@@ -366,6 +366,16 @@
     <span id="statusText">Click the box and paste JSON from the extension</span>
   </div>
 
+  <div id="confirmOverlay" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg); z-index: 100; flex-direction: column; padding: 14px 16px;">
+    <p style="font-size: 12px; font-weight: 600; margin: 0 0 10px;">External Media Detected</p>
+    <p class="hint" style="margin-bottom: 10px;">This payload will fetch images/media from the following external domains. Proceed?</p>
+    <div id="domainList" style="flex: 1; overflow-y: auto; font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-size: 10.5px; background: var(--textarea-bg); border: 1px solid var(--border); padding: 8px; margin-bottom: 12px;"></div>
+    <div style="display: flex; gap: 8px;">
+      <button class="build-btn" id="confirmAllowBtn" style="flex: 2;">Allow & Build</button>
+      <button class="build-btn" id="confirmCancelBtn" style="flex: 1; background: var(--bg); color: var(--text); border-color: var(--border);">Cancel</button>
+    </div>
+  </div>
+
   <script>
     const box = document.getElementById("jsonBox");
     const statusBar = document.getElementById("statusBar");
@@ -379,6 +389,105 @@
     let pendingFiles = [];
     let currentFileIndex = 0;
     let isBuilding = false;
+    let currentPayload = null;
+    let currentIsFileQueue = false;
+
+    function isLocalDomain(domain) {
+      if (!domain) return true;
+      if (domain === "localhost" || domain === "127.0.0.1" || domain === "::1") return true;
+      if (domain.startsWith("192.168.") || domain.startsWith("10.")) return true;
+      if (domain.match(/^172\.(1[6-9]|2[0-9]|3[0-1])\./) !== null) return true;
+      return false;
+    }
+
+    function scanForDomains(node, domains) {
+      if (!node) return;
+      
+      const tryAdd = (urlStr) => {
+        try {
+          if (urlStr.startsWith("http")) {
+            domains.add(new URL(urlStr).hostname);
+          }
+        } catch(e) {}
+      };
+
+      if (node.image) tryAdd(node.image);
+      if (node.videoSrc) tryAdd(node.videoSrc);
+      
+      const bgImg = node.styles && node.styles.backgroundImage;
+      if (bgImg && bgImg !== "none") {
+        const match = bgImg.match(/url\(['"]?(https?:\/\/[^'"]+)['"]?\)/);
+        if (match) tryAdd(match[1]);
+      }
+      
+      const mask = node.styles && (node.styles.maskImage || node.styles.webkitMaskImage || node.styles.mask || node.styles.webkitMask);
+      if (mask && mask !== "none") {
+         const match = mask.match(/url\(['"]?(https?:\/\/[^'"]+)['"]?\)/);
+         if (match) tryAdd(match[1]);
+      }
+
+      if (node.children) {
+        for (const child of node.children) scanForDomains(child, domains);
+      }
+    }
+
+    function executeBuild(parsed, isFileQueue) {
+      if (!isFileQueue) {
+        const txtTrack = document.getElementById("textProgressContainer");
+        const txtFill = document.getElementById("textProgressFill");
+        if (txtTrack && txtFill) {
+          txtTrack.style.display = "block";
+          txtFill.style.width = "0%";
+        }
+      } else {
+        const track = document.getElementById("progress-track-" + currentFileIndex);
+        const fill = document.getElementById("progress-fill-" + currentFileIndex);
+        if (track && fill) {
+          track.style.display = "block";
+          fill.style.width = "0%";
+        }
+      }
+
+      const name = isFileQueue ? pendingFiles[currentFileIndex].name : "JSON";
+      setStatus(`Building ${name}…`, "loading");
+      if (!isFileQueue) buildBtn.disabled = true;
+      parent.postMessage({ pluginMessage: { type: "build", payload: parsed } }, "*");
+    }
+
+    function checkAndBuild(parsed, isFileQueue) {
+      const domains = new Set();
+      if (parsed.root) scanForDomains(parsed.root, domains);
+      
+      const externalDomains = Array.from(domains).filter(d => !isLocalDomain(d));
+      if (externalDomains.length > 0) {
+        currentPayload = parsed;
+        currentIsFileQueue = isFileQueue;
+        document.getElementById("domainList").innerHTML = externalDomains.map(d => `<div>${escapeHTML(d)}</div>`).join("");
+        document.getElementById("confirmOverlay").style.display = "flex";
+        setStatus("Waiting for confirmation…", "err");
+      } else {
+        executeBuild(parsed, isFileQueue);
+      }
+    }
+
+    document.getElementById("confirmAllowBtn").addEventListener("click", () => {
+      document.getElementById("confirmOverlay").style.display = "none";
+      if (currentPayload) executeBuild(currentPayload, currentIsFileQueue);
+    });
+
+    document.getElementById("confirmCancelBtn").addEventListener("click", () => {
+      document.getElementById("confirmOverlay").style.display = "none";
+      currentPayload = null;
+      if (currentIsFileQueue) {
+         setStatus(`Cancelled ${pendingFiles[currentFileIndex].name}.`, "err");
+         currentFileIndex++;
+         setTimeout(processNextFile, 1500);
+      } else {
+         setStatus("Cancelled build.", "err");
+         buildBtn.disabled = false;
+         isBuilding = false;
+      }
+    });
 
     function escapeHTML(str) {
       return str.replace(/[&<>'"]/g, tag => ({
@@ -562,15 +671,7 @@
            return;
         }
         
-        const track = document.getElementById("progress-track-" + currentFileIndex);
-        const fill = document.getElementById("progress-fill-" + currentFileIndex);
-        if (track && fill) {
-          track.style.display = "block";
-          fill.style.width = "0%";
-        }
-        
-        setStatus(`Building ${file.name}…`, "loading");
-        parent.postMessage({ pluginMessage: { type: "build", payload: parsed } }, "*");
+        checkAndBuild(parsed, true);
       };
       
       reader.onerror = () => {
@@ -612,16 +713,7 @@
           return;
         }
 
-        const txtTrack = document.getElementById("textProgressContainer");
-        const txtFill = document.getElementById("textProgressFill");
-        if (txtTrack && txtFill) {
-          txtTrack.style.display = "block";
-          txtFill.style.width = "0%";
-        }
-
-        setStatus("Building…", "loading");
-        buildBtn.disabled = true;
-        parent.postMessage({ pluginMessage: { type: "build", payload: parsed } }, "*");
+        checkAndBuild(parsed, false);
       }
     });
 
