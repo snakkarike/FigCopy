@@ -120,10 +120,6 @@ function applyBoxShadow(node, shadowStr) {
 function applyCommonStyle(node, styles) {
   if (!styles) return;
 
-  if (styles.position === "absolute" || styles.position === "fixed") {
-    node.layoutPositioning = "ABSOLUTE";
-  }
-
   const bg = parseColor(styles.backgroundColor);
   if (bg && "fills" in node) {
     const existing = Array.isArray(node.fills) ? [...node.fills].filter(f => f.type !== "SOLID") : [];
@@ -262,10 +258,33 @@ async function buildNode(domNode, originRect, bump) {
 
   applyCommonStyle(frame, style);
 
-  const isFlex = style.display === "flex" || style.display === "inline-flex";
-  if (isFlex) {
+  const children = domNode.children || [];
+  
+  let wantsAutoLayout = false;
+  if (style.display === "flex" || style.display === "inline-flex") {
+    wantsAutoLayout = true;
     frame.layoutMode = style.flexDirection && style.flexDirection.includes("column") ? "VERTICAL" : "HORIZONTAL";
-    frame.itemSpacing = Math.max(px(style.gap), 0);
+  } else if (style.display === "block" || style.display === "grid" || style.display === "list-item" || style.display === "inline-block") {
+    let hasInline = false;
+    for (const child of children) {
+      if (child.tag === "text_leaf") hasInline = true;
+      if (child.styles && child.styles.display && child.styles.display.startsWith("inline")) hasInline = true;
+    }
+    if (children.length === 1 || (!hasInline && children.length > 0)) {
+      wantsAutoLayout = true;
+      frame.layoutMode = "VERTICAL";
+    }
+  }
+
+  if (wantsAutoLayout) {
+    if (style.display === "flex" || style.display === "inline-flex") {
+      frame.itemSpacing = Math.max(px(style.gap), 0);
+    } else if (children.length > 1) {
+      const gapY = children[1].rect.y - (children[0].rect.y + children[0].rect.height);
+      frame.itemSpacing = Math.max(gapY, 0);
+    } else {
+      frame.itemSpacing = 0;
+    }
     frame.paddingTop = px(style.paddingTop);
     frame.paddingRight = px(style.paddingRight);
     frame.paddingBottom = px(style.paddingBottom);
@@ -278,10 +297,15 @@ async function buildNode(domNode, originRect, bump) {
     frame.layoutMode = "NONE";
   }
 
-  const children = domNode.children || [];
   for (const child of children) {
     const childNode = await buildNode(child, domNode.rect, bump);
     frame.appendChild(childNode);
+    
+    if (wantsAutoLayout && child.styles && (child.styles.position === "absolute" || child.styles.position === "fixed")) {
+      try {
+        childNode.layoutPositioning = "ABSOLUTE";
+      } catch(e) {}
+    }
   }
 
   return frame;
