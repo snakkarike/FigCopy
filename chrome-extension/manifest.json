@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FigCopy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Select any element on the page and copy its layout/style tree to paste into the companion Figma plugin.",
   "permissions": ["activeTab", "scripting", "clipboardWrite", "debugger", "storage"],
   "action": {

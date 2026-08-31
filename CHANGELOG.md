@@ -2,8 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.0] - Recent Security & Robustness Updates
+## [1.0.1] - UI & Icon Polish
 
+### Fixes
+- **Extension Icon Fix:** Padded the `icon.png` to a perfect 1:1 aspect ratio (133x133) to prevent Chrome from stretching and distorting the icon in the extensions toolbar and dropdown.
+- **Popup Logo Scaling:** Added explicit width scaling to the SVG logo in the extension popup to prevent flexbox distortion.
+
+## [1.0.0] - Recent Security & Robustness Updates
 ### Security & Privacy
 - **SSRF / Beaconing Protection:** The Figma plugin now scans pasted payloads for external image/media URLs. If a stranger's payload tries to load external assets, the plugin halts and presents a confirmation UI listing the domains. Local development URLs (`localhost`, LAN IPs) bypass this check automatically for zero-friction workflows.
 - **Privacy & Form Data:** Password fields are no longer captured in plaintext. 
