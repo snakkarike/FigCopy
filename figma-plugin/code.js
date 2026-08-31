@@ -37,9 +37,16 @@ figma.ui.onmessage = async (msg) => {
   if (msg.type !== "build") return;
   try {
     let count = 0;
-    const bump = () => count++;
     const root = msg.payload.root;
     if (!root) throw new Error("No root node in payload");
+
+    const totalNodes = countNodes(root);
+    const bump = () => {
+      count++;
+      if (count % 5 === 0 || count === totalNodes) {
+        figma.ui.postMessage({ type: "progress", current: count, total: totalNodes });
+      }
+    };
 
     const rootFrame = await buildNode(root, root.rect, bump);
     figma.currentPage.appendChild(rootFrame);
@@ -55,6 +62,14 @@ figma.ui.onmessage = async (msg) => {
 };
 
 // ---------- helpers ----------
+
+function countNodes(node) {
+  let count = 1;
+  if (node.children) {
+    for (const child of node.children) count += countNodes(child);
+  }
+  return count;
+}
 
 function oklabToRgb(L, a, b) {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
@@ -288,6 +303,18 @@ function dataURLToBytes(dataURL) {
   return bytes;
 }
 
+async function decodeImageSafe(url) {
+  if (url.startsWith("data:image") && !url.startsWith("data:image/webp")) {
+    return dataURLToBytes(url);
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    pendingImageDecodes.set(url, { resolve, reject });
+    figma.ui.postMessage({ type: "decode-image", url: url });
+    setTimeout(() => reject(new Error("Timeout")), 10000);
+  });
+  return dataURLToBytes(dataUrl);
+}
+
 function applyBoxShadow(node, shadowStr) {
   if (!shadowStr || shadowStr === "none" || !("effects" in node)) return;
   const effects = [];
@@ -403,35 +430,25 @@ async function buildNode(domNode, originRect, bump) {
     }
 
     if (!hasVideo) {
-      if (domNode.image && domNode.image.startsWith("data:image")) {
+      if (domNode.image && (domNode.image.startsWith("data:image") || domNode.image.startsWith("http"))) {
         try {
-          const bytes = dataURLToBytes(domNode.image);
-          const image = figma.createImage(bytes);
-          const scaleMode = domNode.tag === "img" ? "FILL" : "FIT";
-          node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
-        } catch (e) {
-          node.fills = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.85 } }];
-        }
-      } else if (domNode.image && domNode.image.startsWith("http")) {
-        try {
-          const dataUrl = await new Promise((resolve, reject) => {
-            pendingImageDecodes.set(domNode.image, { resolve, reject });
-            figma.ui.postMessage({ type: "decode-image", url: domNode.image });
-            setTimeout(() => reject(new Error("Timeout")), 10000);
-          });
-          const bytes = dataURLToBytes(dataUrl);
+          const bytes = await decodeImageSafe(domNode.image);
           const image = figma.createImage(bytes);
           const scaleMode = domNode.tag === "img" ? "FILL" : "FIT";
           node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
         } catch (uiErr) {
-          try {
-            const response = await fetch(domNode.image);
-            const buffer = await response.arrayBuffer();
-            const bytes = new Uint8Array(buffer);
-            const image = figma.createImage(bytes);
-            const scaleMode = domNode.tag === "img" ? "FILL" : "FIT";
-            node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
-          } catch (fetchErr) {
+          if (domNode.image.startsWith("http")) {
+            try {
+              const response = await fetch(domNode.image);
+              const buffer = await response.arrayBuffer();
+              const bytes = new Uint8Array(buffer);
+              const image = figma.createImage(bytes);
+              const scaleMode = domNode.tag === "img" ? "FILL" : "FIT";
+              node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
+            } catch (fetchErr) {
+              node.fills = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.85 } }];
+            }
+          } else {
             node.fills = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.85 } }];
           }
         }
@@ -628,10 +645,24 @@ async function buildNode(domNode, originRect, bump) {
         const mr = px(child.styles.marginRight);
         if (mt || mb || ml || mr) {
           try {
-            if (mt) childNode.marginTop = mt;
-            if (mb) childNode.marginBottom = mb;
-            if (ml) childNode.marginLeft = ml;
-            if (mr) childNode.marginRight = mr;
+            const wrapper = figma.createFrame();
+            wrapper.name = childNode.name + "-margin";
+            wrapper.fills = [];
+            wrapper.layoutMode = "VERTICAL";
+            wrapper.primaryAxisSizingMode = "HUG";
+            wrapper.counterAxisSizingMode = "HUG";
+            if (mt) wrapper.paddingTop = mt;
+            if (mb) wrapper.paddingBottom = mb;
+            if (ml) wrapper.paddingLeft = ml;
+            if (mr) wrapper.paddingRight = mr;
+            
+            if (!isNaN(flexGrow) && flexGrow > 0) {
+              try { wrapper.layoutGrow = 1; } catch(e) {}
+            }
+            
+            const idx = frame.children.indexOf(childNode);
+            frame.insertChild(idx, wrapper);
+            wrapper.appendChild(childNode);
           } catch(e) {}
         }
       }
@@ -676,30 +707,21 @@ async function buildNode(domNode, originRect, bump) {
         svgNode.y = 0;
         frame.insertChild(0, svgNode);
       } catch(e) {}
-    } else if (bgImgUrl.startsWith("data:image")) {
+    } else if (bgImgUrl.startsWith("data:image") || bgImgUrl.startsWith("http")) {
       try {
-        const bytes = dataURLToBytes(bgImgUrl);
-        const image = figma.createImage(bytes);
-        frame.fills = [...(frame.fills || []), { type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
-      } catch (e) {}
-    } else if (bgImgUrl.startsWith("http")) {
-      try {
-        const dataUrl = await new Promise((resolve, reject) => {
-          pendingImageDecodes.set(bgImgUrl, { resolve, reject });
-          figma.ui.postMessage({ type: "decode-image", url: bgImgUrl });
-          setTimeout(() => reject(new Error("Timeout")), 10000);
-        });
-        const bytes = dataURLToBytes(dataUrl);
+        const bytes = await decodeImageSafe(bgImgUrl);
         const image = figma.createImage(bytes);
         frame.fills = [...(frame.fills || []), { type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
       } catch (uiErr) {
-        try {
-          const response = await fetch(bgImgUrl);
-          const buffer = await response.arrayBuffer();
-          const bytes = new Uint8Array(buffer);
-          const image = figma.createImage(bytes);
-          frame.fills = [...(frame.fills || []), { type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
-        } catch(e) {}
+        if (bgImgUrl.startsWith("http")) {
+          try {
+            const response = await fetch(bgImgUrl);
+            const buffer = await response.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            const image = figma.createImage(bytes);
+            frame.fills = [...(frame.fills || []), { type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+          } catch(e) {}
+        }
       }
     }
   }

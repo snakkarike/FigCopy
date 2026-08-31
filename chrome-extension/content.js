@@ -42,7 +42,7 @@
       canvas.height = imgEl.naturalHeight || imgEl.height || 1;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL("image/png");
+      return canvas.toDataURL("image/webp", 0.8);
     } catch (e) {
       return null; // tainted canvas (cross-origin) — fall back to src URL
     }
@@ -145,7 +145,7 @@
         canvas.height = el.videoHeight || el.height || el.getBoundingClientRect().height || 1;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(el, 0, 0, canvas.width, canvas.height);
-        node.image = canvas.toDataURL("image/png");
+        node.image = canvas.toDataURL("image/webp", 0.8);
       } catch (e) {
         node.image = el.poster || null; // fallback for cross-origin videos
       }
@@ -406,7 +406,10 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "figcopy-layout.json";
+        const host = window.location.hostname.replace(/[^a-z0-9]/gi, '-');
+        const tag = target.id ? target.id : target.tagName.toLowerCase();
+        const ts = Math.floor(Date.now() / 1000);
+        a.download = `figcopy-${host}-${tag}-${ts}.json`;
         a.click();
         URL.revokeObjectURL(url);
         showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);

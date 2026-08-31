@@ -175,7 +175,10 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "figcopy-layout.json";
+        let host = "page";
+        try { host = new URL(tab.url).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
+        const ts = Math.floor(Date.now() / 1000);
+        a.download = `figcopy-${host}-fullpage-${ts}.json`;
         a.click();
         URL.revokeObjectURL(url);
         setStatus(`Downloaded! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
