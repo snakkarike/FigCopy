@@ -5,10 +5,12 @@
 (() => {
   const STYLE_PROPS = [
     "display", "flexDirection", "justifyContent", "alignItems", "gap",
-    "position", "color", "backgroundColor", "opacity",
+    "position", "color", "backgroundColor", "backgroundImage", "opacity",
     "fontSize", "fontWeight", "fontFamily", "lineHeight", "letterSpacing", "textAlign",
+    "textTransform", "textDecoration",
     "borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius",
-    "borderWidth", "borderColor", "borderStyle",
+    "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+    "borderColor", "borderStyle",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "boxShadow"
   ];
@@ -16,6 +18,22 @@
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE"]);
   const MAX_NODES = 1500;
   let nodeCount = 0;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 1; canvas.height = 1;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  function normalizeStringColors(str) {
+    if (!str) return str;
+    return str.replace(/(?:rgba?|oklch|oklab|color|hsla?)\([^)]+\)|#[0-9a-fA-F]{3,8}/g, match => {
+      if (match.startsWith("rgb")) return match;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = match;
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return `rgba(${d[0]}, ${d[1]}, ${d[2]}, ${d[3] / 255})`;
+    });
+  }
 
   function rectOf(el) {
     const r = el.getBoundingClientRect();
@@ -25,7 +43,7 @@
   function collectStyles(computed) {
     const out = {};
     for (const prop of STYLE_PROPS) {
-      out[prop] = computed[prop];
+      out[prop] = normalizeStringColors(computed[prop]);
     }
     return out;
   }
@@ -53,7 +71,7 @@
     if (computed.display === "none" || computed.visibility === "hidden") return null;
 
     const rect = rectOf(el);
-    if (rect.width === 0 && rect.height === 0) return null;
+    if (rect.width === 0 && rect.height === 0 && el.childNodes.length === 0) return null;
 
     nodeCount++;
 
@@ -74,17 +92,48 @@
       return node;
     }
 
-    // Leaf text node: element with no element children but has text
-    const elementChildren = Array.from(el.children);
-    if (elementChildren.length === 0) {
-      const text = el.textContent && el.textContent.trim();
-      if (text) node.text = text;
+    if (el.tagName === "SVG" || el.tagName === "svg") {
+      const clone = el.cloneNode(true);
+      function inlineSvgStyles(originalNode, cloneNode) {
+        if (originalNode.nodeType === 1) { // ELEMENT
+          const comp = window.getComputedStyle(originalNode);
+          if (comp.fill && comp.fill !== "none") cloneNode.setAttribute("fill", normalizeStringColors(comp.fill));
+          if (comp.stroke && comp.stroke !== "none") cloneNode.setAttribute("stroke", normalizeStringColors(comp.stroke));
+          if (comp.strokeWidth && comp.strokeWidth !== "0px") cloneNode.setAttribute("stroke-width", comp.strokeWidth);
+          if (comp.color) cloneNode.setAttribute("color", normalizeStringColors(comp.color));
+        }
+        for (let i = 0; i < originalNode.childNodes.length; i++) {
+          inlineSvgStyles(originalNode.childNodes[i], cloneNode.childNodes[i]);
+        }
+      }
+      inlineSvgStyles(el, clone);
+      node.svg = clone.outerHTML;
       return node;
     }
 
-    for (const child of elementChildren) {
-      const childNode = serialize(child, originRect, depth + 1);
-      if (childNode) node.children.push(childNode);
+    for (const child of el.childNodes) {
+      if (child.nodeType === 1) { // ELEMENT_NODE
+        const childNode = serialize(child, originRect, depth + 1);
+        if (childNode) node.children.push(childNode);
+      } else if (child.nodeType === 3) { // TEXT_NODE
+        const text = child.textContent && child.textContent.trim();
+        if (text) {
+          const range = document.createRange();
+          range.selectNode(child);
+          const textRect = range.getBoundingClientRect();
+          node.children.push({
+            tag: "text_leaf",
+            text: text,
+            rect: {
+              x: Math.round(textRect.x - originRect.x),
+              y: Math.round(textRect.y - originRect.y),
+              width: Math.round(textRect.width),
+              height: Math.round(textRect.height)
+            },
+            styles: collectStyles(computed)
+          });
+        }
+      }
     }
 
     // Collapse: if this wrapper has no direct text and exactly one purpose (pass-through),

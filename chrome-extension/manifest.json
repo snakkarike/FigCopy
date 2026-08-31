@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "DOM to Figma Capture",
+  "name": "FigCopy Capture",
   "version": "1.0.0",
   "description": "Select any element on the page and copy its layout/style tree to paste into the companion Figma plugin.",
   "permissions": ["activeTab", "scripting", "clipboardWrite"],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "DOM to Figma"
+    "default_title": "FigCopy"
   },
   "content_scripts": [
     {

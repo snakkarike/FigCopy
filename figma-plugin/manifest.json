@@ -1,6 +1,6 @@
 {
-  "name": "DOM Import",
-  "id": "dom-import-local-dev",
+  "name": "FigCopy",
+  "id": "figcopy-local-dev",
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",

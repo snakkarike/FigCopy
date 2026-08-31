@@ -88,21 +88,67 @@ function dataURLToBytes(dataURL) {
   return bytes;
 }
 
+function applyBoxShadow(node, shadowStr) {
+  if (!shadowStr || shadowStr === "none" || !("effects" in node)) return;
+  const effects = [];
+  const shadowRegex = /(inset\s+)?(rgba?\([^)]+\)|#[0-9a-fA-F]+|[a-zA-Z]+)\s+([-.\d]+px)\s+([-.\d]+px)\s+([-.\d]+px)\s*([-.\d]+px)?\s*(inset)?/g;
+  let match;
+  while ((match = shadowRegex.exec(shadowStr)) !== null) {
+    const isInset = match[1] || match[7];
+    const colorStr = match[2];
+    const x = px(match[3]);
+    const y = px(match[4]);
+    const blur = px(match[5]);
+    const spread = match[6] ? px(match[6]) : 0;
+    
+    const parsedColor = parseColor(colorStr);
+    if (!parsedColor) continue;
+
+    effects.push({
+      type: isInset ? "INNER_SHADOW" : "DROP_SHADOW",
+      color: { r: parsedColor.color.r, g: parsedColor.color.g, b: parsedColor.color.b, a: parsedColor.opacity },
+      offset: { x, y },
+      radius: blur,
+      spread: spread,
+      visible: true,
+      blendMode: "NORMAL"
+    });
+  }
+  if (effects.length > 0) node.effects = effects;
+}
+
 function applyCommonStyle(node, styles) {
   if (!styles) return;
 
+  if (styles.position === "absolute" || styles.position === "fixed") {
+    node.layoutPositioning = "ABSOLUTE";
+  }
+
   const bg = parseColor(styles.backgroundColor);
   if (bg && "fills" in node) {
-    node.fills = [{ type: "SOLID", color: bg.color, opacity: bg.opacity }];
+    const existing = Array.isArray(node.fills) ? [...node.fills].filter(f => f.type !== "SOLID") : [];
+    node.fills = [...existing, { type: "SOLID", color: bg.color, opacity: bg.opacity }];
   } else if ("fills" in node) {
-    node.fills = [];
+    const existing = Array.isArray(node.fills) ? [...node.fills].filter(f => f.type !== "SOLID") : [];
+    node.fills = existing;
   }
 
   const borderColor = parseColor(styles.borderColor);
-  const borderWidth = px(styles.borderWidth);
-  if (borderColor && borderWidth > 0 && styles.borderStyle !== "none" && "strokes" in node) {
+  const t = px(styles.borderTopWidth);
+  const r = px(styles.borderRightWidth);
+  const b = px(styles.borderBottomWidth);
+  const l = px(styles.borderLeftWidth);
+
+  if (borderColor && styles.borderStyle !== "none" && (t > 0 || r > 0 || b > 0 || l > 0) && "strokes" in node) {
     node.strokes = [{ type: "SOLID", color: borderColor.color, opacity: borderColor.opacity }];
-    node.strokeWeight = borderWidth;
+    if (t === r && r === b && b === l) {
+      node.strokeWeight = t;
+    } else {
+      node.strokeTopWeight = t;
+      node.strokeRightWeight = r;
+      node.strokeBottomWeight = b;
+      node.strokeLeftWeight = l;
+    }
   }
 
   if ("topLeftRadius" in node) {
@@ -114,6 +160,8 @@ function applyCommonStyle(node, styles) {
 
   const opacity = parseFloat(styles.opacity);
   if (!isNaN(opacity) && "opacity" in node) node.opacity = opacity;
+
+  applyBoxShadow(node, styles.boxShadow);
 }
 
 // domNode: captured node. originRect: the rect this node's x/y should be measured against
@@ -143,8 +191,26 @@ async function buildNode(domNode, originRect, bump) {
     return node;
   }
 
+  // ---- SVG leaf ----
+  if (domNode.svg) {
+    try {
+      const node = figma.createNodeFromSvg(domNode.svg);
+      node.name = "svg";
+      node.x = domNode.rect.x - originRect.x;
+      node.y = domNode.rect.y - originRect.y;
+      node.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
+      applyCommonStyle(node, domNode.styles);
+      return node;
+    } catch (e) {
+      // silently fallback to creating a frame if svg fails
+      const node = figma.createFrame();
+      node.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
+      return node;
+    }
+  }
+
   // ---- Text leaf ----
-  if (domNode.text && (!domNode.children || domNode.children.length === 0)) {
+  if (domNode.tag === "text_leaf" || domNode.text) {
     const style = domNode.styles || {};
     const fontStyle = fontStyleFor(style.fontWeight);
     const fontName = await loadFontSafe(fontStyle);
@@ -154,6 +220,13 @@ async function buildNode(domNode, originRect, bump) {
     node.fontName = fontName;
     node.characters = domNode.text;
     node.fontSize = px(style.fontSize) || 12;
+
+    if (style.textTransform === "uppercase") node.textCase = "UPPER";
+    else if (style.textTransform === "lowercase") node.textCase = "LOWER";
+    else if (style.textTransform === "capitalize") node.textCase = "TITLE";
+
+    if (style.textDecoration && style.textDecoration.includes("underline")) node.textDecoration = "UNDERLINE";
+    else if (style.textDecoration && style.textDecoration.includes("line-through")) node.textDecoration = "STRIKETHROUGH";
 
     const lh = style.lineHeight;
     if (lh && lh !== "normal" && !isNaN(parseFloat(lh))) {
@@ -169,8 +242,8 @@ async function buildNode(domNode, originRect, bump) {
 
     node.x = domNode.rect.x - originRect.x;
     node.y = domNode.rect.y - originRect.y;
-    node.textAutoResize = "NONE";
-    node.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
+    node.resize(Math.max(domNode.rect.width + 2, 1), Math.max(domNode.rect.height, 1));
+    node.textAutoResize = "HEIGHT";
 
     const opacity = parseFloat(style.opacity);
     if (!isNaN(opacity)) node.opacity = opacity;
@@ -189,9 +262,9 @@ async function buildNode(domNode, originRect, bump) {
 
   applyCommonStyle(frame, style);
 
-  const isFlex = style.display === "flex";
+  const isFlex = style.display === "flex" || style.display === "inline-flex";
   if (isFlex) {
-    frame.layoutMode = style.flexDirection === "column" ? "VERTICAL" : "HORIZONTAL";
+    frame.layoutMode = style.flexDirection && style.flexDirection.includes("column") ? "VERTICAL" : "HORIZONTAL";
     frame.itemSpacing = Math.max(px(style.gap), 0);
     frame.paddingTop = px(style.paddingTop);
     frame.paddingRight = px(style.paddingRight);
@@ -209,12 +282,6 @@ async function buildNode(domNode, originRect, bump) {
   for (const child of children) {
     const childNode = await buildNode(child, domNode.rect, bump);
     frame.appendChild(childNode);
-    // When the parent uses auto-layout, Figma positions children itself —
-    // clear the absolute x/y we set so it doesn't fight the layout engine.
-    if (isFlex) {
-      childNode.x = 0;
-      childNode.y = 0;
-    }
   }
 
   return frame;

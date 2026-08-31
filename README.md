@@ -1,4 +1,4 @@
-# DOM → Figma
+# FigCopy
 
 Two halves working together:
 
@@ -19,7 +19,7 @@ Two halves working together:
 
 1. In Figma desktop app: **Plugins → Development → Import plugin from manifest…**
 2. Select `figma-plugin/manifest.json`
-3. It'll now show up under **Plugins → Development → DOM Import**
+3. It'll now show up under **Plugins → Development → FigCopy**
 
 ## Using it
 
@@ -27,7 +27,7 @@ Two halves working together:
 2. Click the extension icon → **Pick an element…** → click the section of the
    page you want (or **Capture full page**)
 3. You'll see a toast confirming it copied
-4. In Figma: **Plugins → Development → DOM Import**
+4. In Figma: **Plugins → Development → FigCopy**
 5. Click **Paste from clipboard** (or `Cmd/Ctrl+V` directly into the box)
 6. Click **Build in Figma**
 
