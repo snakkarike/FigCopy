@@ -27,13 +27,68 @@ figma.ui.onmessage = async (msg) => {
 
 function parseColor(str) {
   if (!str) return null;
-  const m = str.match(/rgba?\(([^)]+)\)/);
-  if (!m) return null;
-  const parts = m[1].split(",").map((s) => parseFloat(s.trim()));
-  const [r, g, b, a = 1] = parts;
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
-  if (a === 0) return null; // fully transparent — treat as no fill
-  return { color: { r: r / 255, g: g / 255, b: b / 255 }, opacity: a };
+  
+  if (str.startsWith("#")) {
+    const hex = str.replace("#", "");
+    if (hex.length === 3) return { color: { r: parseInt(hex[0]+hex[0], 16)/255, g: parseInt(hex[1]+hex[1], 16)/255, b: parseInt(hex[2]+hex[2], 16)/255 }, opacity: 1 };
+    if (hex.length >= 6) return { color: { r: parseInt(hex.slice(0,2), 16)/255, g: parseInt(hex.slice(2,4), 16)/255, b: parseInt(hex.slice(4,6), 16)/255 }, opacity: 1 };
+  }
+
+  if (str.startsWith("rgb")) {
+    const m = str.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length >= 3 && !isNaN(parts[0])) {
+        return { color: { r: parts[0]/255, g: parts[1]/255, b: parts[2]/255 }, opacity: parts.length > 3 ? parts[3] : 1 };
+      }
+    }
+  }
+
+  if (str.startsWith("color(")) {
+    const m = str.match(/color\([^ ]+\s+([^)]+)\)/);
+    if (m) {
+      const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length >= 3 && !isNaN(parts[0])) {
+        return { color: { r: parts[0], g: parts[1], b: parts[2] }, opacity: parts.length > 3 ? parts[3] : 1 };
+      }
+    }
+  }
+
+  if (str.startsWith("oklch(")) {
+    const m = str.match(/oklch\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length > 0 && !isNaN(parts[0])) {
+        const l = parts[0] > 1 ? parts[0]/100 : parts[0];
+        return { color: { r: l, g: l, b: l }, opacity: parts.length > 3 ? parts[3] : 1 };
+      }
+    }
+  }
+
+  if (str.startsWith("lab(") || str.startsWith("oklab(")) {
+    const m = str.match(/(?:lab|oklab)\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length > 0 && !isNaN(parts[0])) {
+        const l = parts[0] > 1 ? parts[0]/100 : parts[0];
+        return { color: { r: l, g: l, b: l }, opacity: parts.length > 3 ? parts[3] : 1 };
+      }
+    }
+  }
+
+  if (str.startsWith("hsl")) {
+    const m = str.match(/hsla?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length >= 3 && !isNaN(parts[2])) {
+        const l = parts[2] > 1 ? parts[2]/100 : parts[2];
+        if (l > 0.5) return { color: { r: 1, g: 1, b: 1 }, opacity: 1 };
+        return { color: { r: 0, g: 0, b: 0 }, opacity: 1 };
+      }
+    }
+  }
+
+  return null;
 }
 
 function px(str) {
@@ -165,10 +220,10 @@ function applyCommonStyle(node, styles) {
 async function buildNode(domNode, originRect, bump) {
   bump();
 
-  // ---- Image leaf ----
-  if (domNode.tag === "img") {
+  // ---- Image / Canvas leaf ----
+  if (domNode.tag === "img" || domNode.tag === "canvas") {
     const node = figma.createRectangle();
-    node.name = "img";
+    node.name = domNode.tag === "canvas" ? "canvas" : "img";
     node.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
     node.x = domNode.rect.x - originRect.x;
     node.y = domNode.rect.y - originRect.y;
@@ -176,7 +231,8 @@ async function buildNode(domNode, originRect, bump) {
       try {
         const bytes = dataURLToBytes(domNode.image);
         const image = figma.createImage(bytes);
-        node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+        const scaleMode = domNode.tag === "canvas" ? "FIT" : "FILL";
+        node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
       } catch (e) {
         node.fills = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.85 } }];
       }
@@ -190,7 +246,22 @@ async function buildNode(domNode, originRect, bump) {
   // ---- SVG leaf ----
   if (domNode.svg) {
     try {
-      const node = figma.createNodeFromSvg(domNode.svg);
+      let svgStr = domNode.svg;
+      // Figma's SVG parser doesn't understand CSS Color Level 4 (lab, oklch, etc)
+      // We manually intercept fill/stroke attributes and convert them to #hex + opacity
+      svgStr = svgStr.replace(/(fill|stroke|color)="([^"]+)"/g, (match, attr, colorStr) => {
+        if (colorStr === "none" || colorStr === "transparent") return match;
+        const parsed = parseColor(colorStr);
+        if (parsed) {
+          const r = Math.round(parsed.color.r * 255).toString(16).padStart(2, '0');
+          const g = Math.round(parsed.color.g * 255).toString(16).padStart(2, '0');
+          const b = Math.round(parsed.color.b * 255).toString(16).padStart(2, '0');
+          return `${attr}="#${r}${g}${b}" ${attr}-opacity="${parsed.opacity}"`;
+        }
+        return match;
+      });
+
+      const node = figma.createNodeFromSvg(svgStr);
       node.name = "svg";
       node.x = domNode.rect.x - originRect.x;
       node.y = domNode.rect.y - originRect.y;

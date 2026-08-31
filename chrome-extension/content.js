@@ -20,22 +20,6 @@
   const MAX_NODES = 1500;
   let nodeCount = 0;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = 1; canvas.height = 1;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-  function normalizeStringColors(str) {
-    if (!str) return str;
-    return str.replace(/(?:rgba?|oklch|oklab|color|hsla?)\([^)]+\)|#[0-9a-fA-F]{3,8}/g, match => {
-      if (match.startsWith("rgb")) return match;
-      ctx.clearRect(0, 0, 1, 1);
-      ctx.fillStyle = match;
-      ctx.fillRect(0, 0, 1, 1);
-      const d = ctx.getImageData(0, 0, 1, 1).data;
-      return `rgba(${d[0]}, ${d[1]}, ${d[2]}, ${d[3] / 255})`;
-    });
-  }
-
   function rectOf(el) {
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -44,7 +28,7 @@
   function collectStyles(computed) {
     const out = {};
     for (const prop of STYLE_PROPS) {
-      out[prop] = normalizeStringColors(computed[prop]);
+      out[prop] = computed[prop];
     }
     return out;
   }
@@ -93,15 +77,24 @@
       return node;
     }
 
+    if (el.tagName === "CANVAS") {
+      try {
+        node.image = el.toDataURL("image/png");
+      } catch (e) {
+        node.image = null; // Silently fallback if canvas is tainted
+      }
+      return node;
+    }
+
     if (el.tagName === "SVG" || el.tagName === "svg") {
       const clone = el.cloneNode(true);
       function inlineSvgStyles(originalNode, cloneNode) {
         if (originalNode.nodeType === 1) { // ELEMENT
           const comp = window.getComputedStyle(originalNode);
-          if (comp.fill && comp.fill !== "none") cloneNode.setAttribute("fill", normalizeStringColors(comp.fill));
-          if (comp.stroke && comp.stroke !== "none") cloneNode.setAttribute("stroke", normalizeStringColors(comp.stroke));
+          if (comp.fill && comp.fill !== "none") cloneNode.setAttribute("fill", comp.fill);
+          if (comp.stroke && comp.stroke !== "none") cloneNode.setAttribute("stroke", comp.stroke);
           if (comp.strokeWidth && comp.strokeWidth !== "0px") cloneNode.setAttribute("stroke-width", comp.strokeWidth);
-          if (comp.color) cloneNode.setAttribute("color", normalizeStringColors(comp.color));
+          if (comp.color) cloneNode.setAttribute("color", comp.color);
         }
         for (let i = 0; i < originalNode.childNodes.length; i++) {
           inlineSvgStyles(originalNode.childNodes[i], cloneNode.childNodes[i]);
@@ -134,6 +127,65 @@
             styles: collectStyles(computed)
           });
         }
+      }
+    }
+
+    const isTextInput = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (!el.type || ["text", "password", "email", "search", "number", "tel", "url"].includes(el.type.toLowerCase())));
+    if (isTextInput || el.tagName === "SELECT") {
+      let textVal = "";
+      let isPlaceholder = false;
+      if (el.tagName === "SELECT") {
+        if (el.options && el.options.length > 0 && el.selectedIndex >= 0) {
+          textVal = el.options[el.selectedIndex].text;
+        }
+      } else {
+        textVal = el.value;
+        if (!textVal && el.placeholder) {
+          textVal = el.placeholder;
+          isPlaceholder = true;
+        }
+      }
+
+      if (textVal) {
+        const pt = parseFloat(computed.paddingTop) || 0;
+        const pl = parseFloat(computed.paddingLeft) || 0;
+        const pr = parseFloat(computed.paddingRight) || 0;
+        const pb = parseFloat(computed.paddingBottom) || 0;
+        
+        const textStyles = collectStyles(computed);
+        textStyles.display = "inline";
+        if (isPlaceholder) {
+          textStyles.opacity = "0.5";
+        }
+        
+        node.children.push({
+          tag: "text_leaf",
+          text: textVal,
+          rect: {
+            x: Math.round(rect.x - originRect.x + pl),
+            y: Math.round(rect.y - originRect.y + pt),
+            width: Math.round(Math.max(rect.width - pl - pr, 1)),
+            height: Math.round(Math.max(rect.height - pt - pb, 1))
+          },
+          styles: textStyles
+        });
+      }
+
+      if (el.tagName === "SELECT") {
+        const arrowSize = 10;
+        const pr = parseFloat(computed.paddingRight) || 20;
+        const color = computed.color || "#000000";
+        node.children.push({
+          tag: "svg",
+          svg: `<svg viewBox="0 0 10 10" width="${arrowSize}" height="${arrowSize}"><path fill="${color}" d="M0 3h10L5 8z"/></svg>`,
+          rect: {
+            x: Math.round(rect.x - originRect.x + rect.width - pr + (pr - arrowSize) / 2),
+            y: Math.round(rect.y - originRect.y + (rect.height - arrowSize) / 2),
+            width: arrowSize,
+            height: arrowSize
+          },
+          styles: collectStyles(computed)
+        });
       }
     }
 
