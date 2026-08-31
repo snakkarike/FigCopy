@@ -4,8 +4,8 @@
 
 (() => {
   const STYLE_PROPS = [
-    "display", "flexDirection", "justifyContent", "alignItems", "gap",
-    "position", "color", "backgroundColor", "backgroundImage", "opacity",
+    "display", "flexDirection", "flexWrap", "justifyContent", "alignItems", "gap", "flexGrow",
+    "position", "color", "backgroundColor", "backgroundImage", "backgroundSize", "opacity",
     "fontSize", "fontWeight", "fontFamily", "lineHeight", "letterSpacing", "textAlign",
     "textTransform", "textDecoration",
     "borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius",
@@ -51,6 +51,7 @@
     if (nodeCount > MAX_NODES) return null;
     if (el.nodeType !== 1) return null;
     if (SKIP_TAGS.has(el.tagName)) return null;
+    if (el.hasAttribute("data-figcopy-ignore")) return null;
 
     const computed = window.getComputedStyle(el);
     if (computed.display === "none" || computed.visibility === "hidden") return null;
@@ -215,6 +216,7 @@
   function ensureHoverBox() {
     if (hoverBox) return hoverBox;
     hoverBox = document.createElement("div");
+    hoverBox.setAttribute("data-figcopy-ignore", "true");
     hoverBox.style.cssText = `
       position: fixed; pointer-events: none; z-index: 2147483647;
       border: 2px solid #6E5CFF; background: rgba(110,92,255,0.12);
@@ -236,6 +238,7 @@
 
   function showToast(text) {
     const toast = document.createElement("div");
+    toast.setAttribute("data-figcopy-ignore", "true");
     toast.textContent = text;
     toast.style.cssText = `
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -291,8 +294,55 @@
   // ---------- Message bridge to popup ----------
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "CAPTURE_FULL_PAGE") {
-      const data = captureElement(document.documentElement);
-      sendResponse({ ok: true, data });
+      (async () => {
+        showToast("Scrolling page to trigger animations...");
+        
+        // Auto-scroll to trigger IntersectionObservers
+        const scrollHeight = document.body.scrollHeight;
+        const viewportHeight = window.innerHeight;
+        
+        // Disable smooth scrolling temporarily to prevent mid-scroll captures
+        const origHtmlBehavior = document.documentElement.style.scrollBehavior;
+        const origBodyBehavior = document.body.style.scrollBehavior;
+        document.documentElement.style.scrollBehavior = 'auto';
+        document.body.style.scrollBehavior = 'auto';
+        
+        for (let y = 0; y < scrollHeight; y += viewportHeight / 2) {
+          window.scrollTo({ top: y, behavior: 'instant' });
+          await new Promise(r => setTimeout(r, 100)); // wait for GSAP triggers
+        }
+        
+        // Wait for final animations to finish
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Snap back to the top
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        
+        // Force and wait until we are strictly at the top
+        let attempts = 0;
+        while (window.scrollY > 0 && attempts < 20) {
+          window.scrollTo({ top: 0, behavior: 'instant' });
+          await new Promise(r => setTimeout(r, 50));
+          attempts++;
+        }
+        
+        // Restore smooth scrolling
+        document.documentElement.style.scrollBehavior = origHtmlBehavior;
+        document.body.style.scrollBehavior = origBodyBehavior;
+
+        const data = captureElement(document.documentElement);
+        
+        // Write to clipboard here just in case popup closed
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(data));
+          showToast("Copied full page layout — paste into Figma!");
+        } catch (e) {
+          showToast("Couldn't copy automatically — check console");
+          console.log(JSON.stringify(data));
+        }
+        
+        sendResponse({ ok: true, data });
+      })();
       return true;
     }
     if (msg.type === "START_PICKER") {

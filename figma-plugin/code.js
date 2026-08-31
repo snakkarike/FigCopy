@@ -54,22 +54,56 @@ function parseColor(str) {
     }
   }
 
+  function oklabToRgb(L, a, b) {
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    const l = l_ * l_ * l_;
+    const m = m_ * m_ * m_;
+    const s = s_ * s_ * s_;
+    let r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    let b_ = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+    r = r > 0.0031308 ? 1.055 * Math.pow(r, 1/2.4) - 0.055 : 12.92 * r;
+    g = g > 0.0031308 ? 1.055 * Math.pow(g, 1/2.4) - 0.055 : 12.92 * g;
+    b_ = b_ > 0.0031308 ? 1.055 * Math.pow(b_, 1/2.4) - 0.055 : 12.92 * b_;
+    return { r: Math.max(0, Math.min(1, r)), g: Math.max(0, Math.min(1, g)), b: Math.max(0, Math.min(1, b_)) };
+  }
+
   if (str.startsWith("oklch(")) {
     const m = str.match(/oklch\(([^)]+)\)/);
     if (m) {
       const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
-      if (parts.length > 0 && !isNaN(parts[0])) {
-        const l = parts[0] > 1 ? parts[0]/100 : parts[0];
-        return { color: { r: l, g: l, b: l }, opacity: parts.length > 3 ? parts[3] : 1 };
+      if (parts.length >= 3 && !isNaN(parts[0])) {
+        const L = parts[0] > 1 ? parts[0]/100 : parts[0];
+        const C = parts[1];
+        const hRad = parts[2] * Math.PI / 180;
+        const a = C * Math.cos(hRad);
+        const b = C * Math.sin(hRad);
+        return { color: oklabToRgb(L, a, b), opacity: parts.length > 3 ? parts[3] : 1 };
       }
     }
   }
 
-  if (str.startsWith("lab(") || str.startsWith("oklab(")) {
-    const m = str.match(/(?:lab|oklab)\(([^)]+)\)/);
+  if (str.startsWith("oklab(")) {
+    const m = str.match(/oklab\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length >= 3 && !isNaN(parts[0])) {
+        const L = parts[0] > 1 ? parts[0]/100 : parts[0];
+        const a = parts[1];
+        const b = parts[2];
+        return { color: oklabToRgb(L, a, b), opacity: parts.length > 3 ? parts[3] : 1 };
+      }
+    }
+  }
+
+  if (str.startsWith("lab(")) {
+    const m = str.match(/lab\(([^)]+)\)/);
     if (m) {
       const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
       if (parts.length > 0 && !isNaN(parts[0])) {
+        // Fallback for standard lab to grayscale (as true Lab to sRGB is complex)
         const l = parts[0] > 1 ? parts[0]/100 : parts[0];
         return { color: { r: l, g: l, b: l }, opacity: parts.length > 3 ? parts[3] : 1 };
       }
@@ -96,22 +130,19 @@ function px(str) {
   return isNaN(n) ? 0 : n;
 }
 
-function alignPrimary(justifyContent) {
-  switch (justifyContent) {
-    case "center": return "CENTER";
-    case "flex-end": return "MAX";
-    case "space-between": return "SPACE_BETWEEN";
-    default: return "MIN";
-  }
+function alignPrimary(val) {
+  if (!val) return "MIN";
+  if (val.includes("center")) return "CENTER";
+  if (val.includes("end")) return "MAX";
+  if (val.includes("space-between")) return "SPACE_BETWEEN";
+  return "MIN";
 }
 
-function alignCounter(alignItems) {
-  switch (alignItems) {
-    case "center": return "CENTER";
-    case "flex-end": return "MAX";
-    case "baseline": return "MIN";
-    default: return "MIN";
-  }
+function alignCounter(val) {
+  if (!val) return "MIN";
+  if (val.includes("center")) return "CENTER";
+  if (val.includes("end")) return "MAX";
+  return "MIN";
 }
 
 function fontStyleFor(fontWeight) {
@@ -210,9 +241,23 @@ function applyCommonStyle(node, styles) {
   }
 
   const opacity = parseFloat(styles.opacity);
-  if (!isNaN(opacity) && "opacity" in node) node.opacity = opacity;
+  // We ignore opacity 0 because it's almost always a scroll animation (e.g. GSAP/AOS) 
+  // and users want to see the elements in their design file.
+  if (!isNaN(opacity) && opacity > 0 && "opacity" in node) node.opacity = opacity;
 
   applyBoxShadow(node, styles.boxShadow);
+}
+
+function parseLinearGradient(bgStr) {
+  // Very basic universal parser for linear-gradient
+  // Handles: linear-gradient(90deg, red, blue) or linear-gradient(to right, #f00 0%, #00f 100%)
+  if (!bgStr || !bgStr.includes('linear-gradient')) return null;
+  
+  // This is a complex problem in regex, we'll extract just a basic 2-color gradient for now
+  // as full CSS gradient parsing requires an AST parser (like css-gradient-parser).
+  // For V1 generic compatibility, we just return null to avoid breaking,
+  // or we can implement a basic fallback if needed.
+  return null;
 }
 
 // domNode: captured node. originRect: the rect this node's x/y should be measured against
@@ -338,7 +383,7 @@ async function buildNode(domNode, originRect, bump) {
 
   applyCommonStyle(frame, style);
   
-  const children = domNode.children || [];
+  const children = domNode.children ? [...domNode.children] : [];
   
   let wantsAutoLayout = false;
   if (style.display === "flex" || style.display === "inline-flex") {
@@ -349,51 +394,49 @@ async function buildNode(domNode, originRect, bump) {
   if (wantsAutoLayout) {
     const flowChildren = children.filter(c => !(c.styles && (c.styles.position === "absolute" || c.styles.position === "fixed")));
 
-    if (frame.layoutMode === "VERTICAL" && flowChildren.length > 1) {
-      const gapY = flowChildren[1].rect.y - (flowChildren[0].rect.y + flowChildren[0].rect.height);
-      frame.itemSpacing = Math.max(gapY, px(style.gap) || 0, 0);
-    } else {
-      frame.itemSpacing = Math.max(px(style.gap), 0);
-    }
+    frame.itemSpacing = Math.max(px(style.gap) || 0, 0);
 
-    if (flowChildren.length > 0) {
-      let minY = Infinity, maxY = -Infinity;
-      for (const child of flowChildren) {
-        if (child.rect.y < minY) minY = child.rect.y;
-        if (child.rect.y + child.rect.height > maxY) maxY = child.rect.y + child.rect.height;
-      }
-      frame.paddingTop = Math.max(minY - domNode.rect.y, 0);
-      frame.paddingBottom = Math.max((domNode.rect.y + domNode.rect.height) - maxY, 0);
-    } else {
-      frame.paddingTop = px(style.paddingTop);
-      frame.paddingBottom = px(style.paddingBottom);
-    }
-
+    frame.paddingTop = px(style.paddingTop);
+    frame.paddingBottom = px(style.paddingBottom);
     frame.paddingLeft = px(style.paddingLeft);
     frame.paddingRight = px(style.paddingRight);
 
     frame.primaryAxisAlignItems = alignPrimary(style.justifyContent);
     frame.counterAxisAlignItems = alignCounter(style.alignItems);
     
-    if (frame.layoutMode === "VERTICAL") {
-      frame.primaryAxisSizingMode = "AUTO";
-      frame.counterAxisSizingMode = "FIXED";
-    } else {
-      frame.primaryAxisSizingMode = "FIXED";
-      frame.counterAxisSizingMode = "AUTO";
+    if (style.flexWrap === "wrap") {
+      frame.layoutWrap = "WRAP";
     }
+    
+    frame.primaryAxisSizingMode = "FIXED";
+    frame.counterAxisSizingMode = "FIXED";
   } else {
     frame.layoutMode = "NONE";
   }
 
   for (const child of children) {
     const childNode = await buildNode(child, domNode.rect, bump);
+    
+    const origX = childNode.x;
+    const origY = childNode.y;
+    
     frame.appendChild(childNode);
     
-    if (wantsAutoLayout && child.styles && (child.styles.position === "absolute" || child.styles.position === "fixed")) {
-      try {
-        childNode.layoutPositioning = "ABSOLUTE";
-      } catch(e) {}
+    if (wantsAutoLayout && child.styles) {
+      if (child.styles.position === "absolute" || child.styles.position === "fixed") {
+        try {
+          childNode.layoutPositioning = "ABSOLUTE";
+          childNode.x = origX;
+          childNode.y = origY;
+        } catch(e) {}
+      } else {
+        const flexGrow = parseFloat(child.styles.flexGrow);
+        if (!isNaN(flexGrow) && flexGrow > 0) {
+          try {
+            childNode.layoutGrow = 1;
+          } catch(e) {}
+        }
+      }
     }
   }
 
