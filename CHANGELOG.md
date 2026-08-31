@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - Recent Security & Robustness Updates
+## [1.0.0] - Recent Security & Robustness Updates
 
 ### Security & Privacy
 - **SSRF / Beaconing Protection:** The Figma plugin now scans pasted payloads for external image/media URLs. If a stranger's payload tries to load external assets, the plugin halts and presents a confirmation UI listing the domains. Local development URLs (`localhost`, LAN IPs) bypass this check automatically for zero-friction workflows.
@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file.
 - **Comprehensive Form Capture:** Expanded `isTextInput` list to natively handle modern HTML5 inputs (`date`, `color`, `range`, `time`, etc.), ensuring full-fidelity form capture.
 - **CI & Automation:** Added GitHub Action workflows for basic CI linting and automated release packaging, and removed checked-in binary `.zip` artifacts from the repository.
 
-## [1.0.0] - Initial Release
+## [0.0.1] - Initial Release
 
 ### Added
 - **Core Engine:** DOM-to-JSON serialization in Chrome Extension and JSON-to-Figma reconstruction in Figma Plugin.
