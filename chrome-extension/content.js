@@ -332,15 +332,6 @@
 
         const data = captureElement(document.documentElement);
         
-        // Write to clipboard here just in case popup closed
-        try {
-          await navigator.clipboard.writeText(JSON.stringify(data));
-          showToast("Copied full page layout — paste into Figma!");
-        } catch (e) {
-          showToast("Couldn't copy automatically — check console");
-          console.log(JSON.stringify(data));
-        }
-        
         sendResponse({ ok: true, data });
       })();
       return true;
