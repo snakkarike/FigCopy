@@ -78,3 +78,7 @@ chrome.debugger.onDetach.addListener((source) => {
     removeAttachedTab(source.tabId);
   }
 });
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  removeAttachedTab(tabId);
+});

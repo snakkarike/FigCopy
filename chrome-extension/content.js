@@ -242,16 +242,16 @@
     const pseudoAfter = capturePseudo(el, originRect, "::after");
     if (pseudoAfter) node.children.push(pseudoAfter);
 
-    const isTextInput = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (!el.type || ["text", "password", "email", "search", "number", "tel", "url"].includes(el.type.toLowerCase())));
+    const isTextInput = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (!el.type || ["text", "email", "search", "number", "tel", "url"].includes(el.type.toLowerCase())));
     if (isTextInput || el.tagName === "SELECT") {
       let textVal = "";
       let isPlaceholder = false;
       if (el.tagName === "SELECT") {
-        if (el.options && el.options.length > 0 && el.selectedIndex >= 0) {
+        if (!skipFormValuesGlobal && el.options && el.options.length > 0 && el.selectedIndex >= 0) {
           textVal = el.options[el.selectedIndex].text;
         }
       } else {
-        textVal = el.value;
+        textVal = skipFormValuesGlobal ? "" : el.value;
         if (!textVal && el.placeholder) {
           textVal = el.placeholder;
           isPlaceholder = true;
@@ -324,6 +324,7 @@
   let picking = false;
   let didEmulateGlobal = false;
   let downloadInsteadGlobal = false;
+  let skipFormValuesGlobal = false;
   let onPicked = null;
 
   function ensureHoverBox() {
@@ -498,6 +499,7 @@
   // ---------- Message bridge to popup ----------
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "CAPTURE_FULL_PAGE") {
+      skipFormValuesGlobal = msg.skipFormValues || false;
       (async () => {
         showToast("Scrolling to trigger animations…");
         
@@ -543,6 +545,7 @@
     if (msg.type === "START_PICKER") {
       didEmulateGlobal = msg.didEmulate || false;
       downloadInsteadGlobal = msg.downloadInstead || false;
+      skipFormValuesGlobal = msg.skipFormValues || false;
       startPicking(() => {
         // Clipboard write already happened inside onClick, above.
       });

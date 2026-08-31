@@ -63,10 +63,14 @@ figma.ui.onmessage = async (msg) => {
 
 // ---------- helpers ----------
 
-function countNodes(node) {
+function countNodes(node, depth = 0, state = { count: 0 }) {
+  if (depth > 500) throw new Error("Payload too deep (max 500 levels)");
+  state.count++;
+  if (state.count > 3000) throw new Error("Too many nodes in payload (max 3000)");
+
   let count = 1;
   if (node.children) {
-    for (const child of node.children) count += countNodes(child);
+    for (const child of node.children) count += countNodes(child, depth + 1, state);
   }
   return count;
 }
@@ -391,7 +395,8 @@ function applyCommonStyle(node, styles) {
 
 // domNode: captured node. originRect: the rect this node's x/y should be measured against
 // (its parent's captured rect), so Figma's parent-relative coordinates come out right.
-async function buildNode(domNode, originRect, bump) {
+async function buildNode(domNode, originRect, bump, depth = 0) {
+  if (depth > 500) throw new Error("Payload too deep (max 500 levels)");
   bump();
 
   // ---- Image / Canvas / Video leaf ----
@@ -617,7 +622,7 @@ async function buildNode(domNode, originRect, bump) {
   }
 
   for (const child of children) {
-    const childNode = await buildNode(child, domNode.rect, bump);
+    const childNode = await buildNode(child, domNode.rect, bump, depth + 1);
     
     const origX = childNode.x;
     const origY = childNode.y;

@@ -33,6 +33,10 @@ It consists of two halves working together:
 
 ---
 
+## 🔒 Permissions
+
+The extension requests the `debugger` permission solely to simulate viewport resizing (e.g. mobile/tablet layouts) without physically resizing your browser window. It strictly uses `Emulation.setDeviceMetricsOverride`. Chrome displays a banner while this is active, but no debugging data is captured or logged.
+
 ## 🛠️ How to use
 
 1. Open the website or local app you want to capture in Chrome.

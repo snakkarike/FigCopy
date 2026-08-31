@@ -99,11 +99,16 @@ function updateEmulateBtnUI() {
 checkEmulationState();
 
 const downloadCheck = document.getElementById("downloadCheck");
-chrome.storage.local.get("downloadInstead", (data) => {
+const skipFormValuesCheck = document.getElementById("skipFormValuesCheck");
+chrome.storage.local.get(["downloadInstead", "skipFormValues"], (data) => {
   downloadCheck.checked = !!data.downloadInstead;
+  skipFormValuesCheck.checked = !!data.skipFormValues;
 });
 downloadCheck.addEventListener("change", () => {
   chrome.storage.local.set({ downloadInstead: downloadCheck.checked });
+});
+skipFormValuesCheck.addEventListener("change", () => {
+  chrome.storage.local.set({ skipFormValues: skipFormValuesCheck.checked });
 });
 
 document.getElementById("emulateBtn").addEventListener("click", async () => {
@@ -139,9 +144,10 @@ document.getElementById("pickBtn").addEventListener("click", async () => {
 
   const didEmulate = await applyViewportResize(tab);
   const downloadInstead = downloadCheck.checked;
+  const skipFormValues = skipFormValuesCheck.checked;
 
   setStatus("Click any element… (Esc to cancel)");
-  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead }, () => {
+  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead, skipFormValues }, () => {
     if (chrome.runtime.lastError) {}
     window.close();
   });
@@ -158,8 +164,9 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
 
   setStatus("Capturing…", "loading");
   const downloadInstead = downloadCheck.checked;
+  const skipFormValues = skipFormValuesCheck.checked;
   
-  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE" }, async (response) => {
+  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues }, async (response) => {
     if (didEmulate) {
       chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
     }

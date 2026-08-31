@@ -380,6 +380,16 @@
     let currentFileIndex = 0;
     let isBuilding = false;
 
+    function escapeHTML(str) {
+      return str.replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag));
+    }
+
     function setStatus(text, kind) {
       statusText.textContent = text;
       statusBar.className = "status-bar" + (kind ? " " + kind : "");
@@ -410,7 +420,7 @@
           item.innerHTML = `
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <div class="file-info">
-                <span class="file-name">${file.name}</span>
+                <span class="file-name">${escapeHTML(file.name)}</span>
                 <span class="file-size">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
               </div>
               <button class="remove-file" data-index="${index}" style="color:${iconColor}; cursor:${disabled ? 'default' : 'pointer'};" ${disabled ? "disabled" : ""}>${icon}</button>
