@@ -82,6 +82,14 @@ While FigCopy is powerful, some things still require manual cleanup in Figma (wh
 
 ---
 
+## 📜 License
+
+This project is licensed under the **GNU General Public License v3.0** (GPLv3). 
+
+You are free to use, modify, and distribute this software, but any derivative works must also be open-source and distributed under the same GPLv3 license. See the [LICENSE](LICENSE) file for the full text.
+
+---
+
 <div align="center">
   <i>Built to make the design-to-code loop a two-way street.</i>
   <br/><br/>
