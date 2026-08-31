@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Package Chrome Extension
+        run: |
+          cd chrome-extension
+          zip -r ../figcopy-chrome-extension.zip . -x "*.git*"
+          
+      - name: Package Figma Plugin
+        run: |
+          cd figma-plugin
+          zip -r ../figcopy-figma-plugin.zip . -x "*.git*"
+          
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            figcopy-chrome-extension.zip
+            figcopy-figma-plugin.zip

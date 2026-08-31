@@ -98,14 +98,27 @@
     
     if (content.startsWith("url(")) {
        node.tag = "img";
-       node.image = content.match(/url\(([^)]+)\)/)[1].replace(/["']/g, "");
+       const match = content.match(/url\(([^)]+)\)/);
+       if (match) {
+         node.image = match[1].replace(/["']/g, "");
+       } else {
+         return null;
+       }
     }
     
     return node;
   }
 
+  let didShowTruncateToast = false;
+
   function serialize(el, originRect, depth) {
-    if (nodeCount > MAX_NODES) return null;
+    if (nodeCount > MAX_NODES) {
+      if (!didShowTruncateToast) {
+        showToast("Capture truncated — page has 1500+ nodes", "err");
+        didShowTruncateToast = true;
+      }
+      return null;
+    }
     if (el.nodeType !== 1) return null;
     if (SKIP_TAGS.has(el.tagName)) return null;
     if (el.hasAttribute("data-figcopy-ignore")) return null;
@@ -242,7 +255,7 @@
     const pseudoAfter = capturePseudo(el, originRect, "::after");
     if (pseudoAfter) node.children.push(pseudoAfter);
 
-    const isTextInput = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (!el.type || ["text", "email", "search", "number", "tel", "url"].includes(el.type.toLowerCase())));
+    const isTextInput = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (!el.type || ["text", "email", "search", "number", "tel", "url", "date", "color", "range", "time", "datetime-local", "month", "week"].includes(el.type.toLowerCase())));
     if (isTextInput || el.tagName === "SELECT") {
       let textVal = "";
       let isPlaceholder = false;
@@ -309,6 +322,7 @@
 
   function captureElement(el) {
     nodeCount = 0;
+    didShowTruncateToast = false;
     const originRect = el.getBoundingClientRect();
     const tree = serialize(el, originRect, 0);
     return {

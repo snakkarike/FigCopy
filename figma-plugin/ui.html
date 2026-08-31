@@ -393,7 +393,7 @@
     let currentIsFileQueue = false;
 
     function isLocalDomain(domain) {
-      if (!domain) return true;
+      if (!domain) return false;
       if (domain === "localhost" || domain === "127.0.0.1" || domain === "::1") return true;
       if (domain.startsWith("192.168.") || domain.startsWith("10.")) return true;
       if (domain.match(/^172\.(1[6-9]|2[0-9]|3[0-1])\./) !== null) return true;
@@ -793,11 +793,27 @@
         // The foreignObject SVG trick: wrap a styled div inside an SVG foreignObject,
         // serialize to data: URL, draw onto a canvas. This preserves all CSS rendering
         // including multi-layer gradients, CSS variables already resolved.
-        const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="${tileW}" height="${tileH}">
-          <foreignObject width="${tileW}" height="${tileH}">
-            <div xmlns="http://www.w3.org/1999/xhtml" style="width:${tileW}px;height:${tileH}px;background-image:${msg.bgImage.replace(/"/g, "'")};background-size:${msg.bgSize};margin:0;padding:0;"></div>
-          </foreignObject>
-        </svg>`;
+        const div = document.createElement("div");
+        div.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        div.style.width = tileW + "px";
+        div.style.height = tileH + "px";
+        div.style.backgroundImage = msg.bgImage;
+        div.style.backgroundSize = msg.bgSize;
+        div.style.margin = "0";
+        div.style.padding = "0";
+
+        const foreignObj = document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
+        foreignObj.setAttribute("width", tileW);
+        foreignObj.setAttribute("height", tileH);
+        foreignObj.appendChild(div);
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        svg.setAttribute("width", tileW);
+        svg.setAttribute("height", tileH);
+        svg.appendChild(foreignObj);
+
+        const svgStr = new XMLSerializer().serializeToString(svg);
 
         const canvas = document.createElement("canvas");
         canvas.width = tileW;
