@@ -177,8 +177,9 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
         a.href = url;
         let host = "page";
         try { host = new URL(tab.url).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
-        const ts = Math.floor(Date.now() / 1000);
-        a.download = `figcopy-${host}-fullpage-${ts}.json`;
+        const d = new Date();
+        const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
+        a.download = `figcopy-${host}-fullpage-${time}.json`;
         a.click();
         URL.revokeObjectURL(url);
         setStatus(`Downloaded! (${(json.length / 1024).toFixed(1)} KB)`, "ok");

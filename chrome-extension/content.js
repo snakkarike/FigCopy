@@ -408,8 +408,9 @@
         a.href = url;
         const host = window.location.hostname.replace(/[^a-z0-9]/gi, '-');
         const tag = target.id ? target.id : target.tagName.toLowerCase();
-        const ts = Math.floor(Date.now() / 1000);
-        a.download = `figcopy-${host}-${tag}-${ts}.json`;
+        const d = new Date();
+        const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
+        a.download = `figcopy-${host}-${tag}-${time}.json`;
         a.click();
         URL.revokeObjectURL(url);
         showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);
