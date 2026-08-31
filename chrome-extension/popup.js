@@ -33,6 +33,95 @@ async function ensureContentScript(tabId) {
   }
 }
 
+async function applyViewportResize(tab) {
+  const widthStr = document.getElementById("viewportSelect").value;
+  if (widthStr === "current") return false;
+
+  let width = parseInt(widthStr, 10);
+  if (widthStr === "custom") {
+    width = parseInt(document.getElementById("customWidthInput").value, 10) || 1200;
+  }
+  
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: "START_EMULATION", tabId: tab.id, width }, (res) => {
+      if (res && res.success) {
+        // Wait a tiny bit for the browser to reflow the layout
+        setTimeout(() => resolve(true), 400);
+      } else {
+        resolve(false);
+      }
+    });
+  });
+}
+
+document.getElementById("viewportSelect").addEventListener("change", (e) => {
+  const customWrap = document.getElementById("customWidthWrap");
+  if (e.target.value === "custom") {
+    customWrap.style.display = "block";
+  } else {
+    customWrap.style.display = "none";
+  }
+});
+
+let isEmulating = false;
+
+async function checkEmulationState() {
+  const tab = await getActiveTab();
+  if (!tab) return;
+  chrome.runtime.sendMessage({ type: "CHECK_EMULATION", tabId: tab.id }, (res) => {
+    isEmulating = res && res.isEmulating;
+    updateEmulateBtnUI();
+  });
+}
+
+function updateEmulateBtnUI() {
+  const btn = document.getElementById("emulateBtn");
+  if (isEmulating) {
+    btn.innerHTML = `<span class="btn-icon">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M1 6C1 6 3 2 6 2C9 2 11 6 11 6C11 6 9 10 6 10C3 10 1 6 1 6Z" stroke="var(--text)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="1.5" y1="10.5" x2="10.5" y2="1.5" stroke="var(--text)" stroke-width="1.2"/>
+      </svg>
+    </span>Stop Emulating`;
+    btn.classList.add("active-toggle"); // You can style this if needed
+  } else {
+    btn.innerHTML = `<span class="btn-icon">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M1 6C1 6 3 2 6 2C9 2 11 6 11 6C11 6 9 10 6 10C3 10 1 6 1 6Z" stroke="var(--text)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="6" cy="6" r="2" stroke="var(--text)" stroke-width="1.2"/>
+      </svg>
+    </span>Toggle Emulation`;
+    btn.classList.remove("active-toggle");
+  }
+}
+
+// Check state on load
+checkEmulationState();
+
+document.getElementById("emulateBtn").addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  if (!tab) return setStatus("No active tab.", "err");
+  
+  if (isEmulating) {
+    chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
+    isEmulating = false;
+    updateEmulateBtnUI();
+  } else {
+    if (document.getElementById("viewportSelect").value === "current") {
+      setStatus("Select a width to emulate first", "err");
+      return;
+    }
+    const success = await applyViewportResize(tab);
+    if (success) {
+      isEmulating = true;
+      updateEmulateBtnUI();
+      setStatus("Emulation started", "ok");
+    } else {
+      setStatus("Failed to start emulation", "err");
+    }
+  }
+});
+
 document.getElementById("pickBtn").addEventListener("click", async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus("No active tab.", "err");
@@ -40,11 +129,11 @@ document.getElementById("pickBtn").addEventListener("click", async () => {
   const ok = await ensureContentScript(tab.id);
   if (!ok) return;
 
+  const didEmulate = await applyViewportResize(tab);
+
   setStatus("Click any element… (Esc to cancel)");
-  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER" }, () => {
-    if (chrome.runtime.lastError) {
-      // popup may already be closed — that's fine
-    }
+  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate }, () => {
+    if (chrome.runtime.lastError) {}
     window.close();
   });
 });
@@ -56,8 +145,14 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
   const ok = await ensureContentScript(tab.id);
   if (!ok) return;
 
+  const didEmulate = await applyViewportResize(tab);
+
   setStatus("Capturing…", "loading");
   chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE" }, async (response) => {
+    if (didEmulate) {
+      chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
+    }
+
     if (chrome.runtime.lastError || !response || !response.ok) {
       setStatus("Couldn't reach the page. Try reloading it.", "err");
       return;

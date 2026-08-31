@@ -322,6 +322,7 @@
   // ---------- Picker overlay ----------
   let hoverBox = null;
   let picking = false;
+  let didEmulateGlobal = false;
   let onPicked = null;
 
   function ensureHoverBox() {
@@ -350,7 +351,7 @@
     box.style.height = r.height + "px";
   }
 
-  function showToast(text, kind) {
+  function showToast(text, kind, duration = 2500) {
     // Remove any existing toast first
     document.querySelectorAll('[data-figcopy-toast]').forEach(t => t.remove());
     
@@ -383,7 +384,9 @@
     toast.appendChild(dot);
     toast.appendChild(label);
     document.documentElement.appendChild(toast);
-    setTimeout(() => toast.remove(), 2500);
+    if (duration > 0) {
+      setTimeout(() => toast.remove(), duration);
+    }
   }
 
   function onClick(e) {
@@ -407,24 +410,67 @@
     if (e.key === "Escape") stopPicking();
   }
 
+  function onMouseDown(e) {
+    if (!picking) return;
+    if (e.button !== 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      stopPicking();
+      
+      // If it was a right click, block the impending contextmenu event
+      if (e.button === 2) {
+        window.addEventListener("contextmenu", function blockMenu(ce) {
+          ce.preventDefault();
+          ce.stopPropagation();
+          ce.stopImmediatePropagation();
+          window.removeEventListener("contextmenu", blockMenu, true);
+        }, true);
+      }
+    }
+  }
+
+  function onContextMenu(e) {
+    if (!picking) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    stopPicking();
+  }
+
   function startPicking(callback) {
     picking = true;
     onPicked = callback;
     document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("contextmenu", onContextMenu, true);
     document.body.style.cursor = "crosshair";
+    showToast("Pick an element (Press Esc or Right Click to cancel)", "info", 0);
   }
 
   function stopPicking() {
     picking = false;
     document.removeEventListener("mousemove", onMouseMove, true);
+    document.removeEventListener("mousedown", onMouseDown, true);
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("contextmenu", onContextMenu, true);
     document.body.style.cursor = "";
+    document.querySelectorAll('[data-figcopy-toast]').forEach(t => {
+      // Don't remove it if we just showed the "Copied!" message, 
+      // which happens immediately *after* stopPicking is called in onClick.
+      // But if it's the "Pick an element" message, remove it.
+      if (t.textContent.includes("Pick an element")) t.remove();
+    });
     if (hoverBox) {
       hoverBox.remove();
       hoverBox = null;
+    }
+    if (didEmulateGlobal) {
+      chrome.runtime.sendMessage({ type: "STOP_EMULATION" });
+      didEmulateGlobal = false;
     }
   }
 
@@ -474,6 +520,7 @@
       return true;
     }
     if (msg.type === "START_PICKER") {
+      didEmulateGlobal = msg.didEmulate || false;
       startPicking(() => {
         // Clipboard write already happened inside onClick, above.
       });

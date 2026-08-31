@@ -83,30 +83,71 @@
 
     button {
       width: 100%;
-      padding: 9px 12px;
-      border: none;
+      padding: 10px;
+      border: 1px solid var(--btn-bg);
       font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
+      font-weight: 700;
+      letter-spacing: 0.05em;
       text-transform: uppercase;
       cursor: pointer;
-      text-align: left;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      transition: background 0.1s;
-    }
-
-    button + button {
-      border-top: 1px solid var(--border);
-    }
-
-    #pickBtn {
       background: var(--btn-bg);
       color: var(--btn-text);
+      transition: background 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
 
-    #pickBtn:hover { background: var(--btn-hover); }
+    button:hover { background: var(--btn-hover); }
+    #fullPageBtn, #emulateBtn {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+    #fullPageBtn:hover, #emulateBtn:hover { background: rgba(128,128,128,0.1); }
+    #emulateBtn.active-toggle {
+      background: rgba(128,128,128,0.2);
+      border-color: var(--text);
+    }
+
+    .select-wrap {
+      margin: 10px 0 12px;
+      position: relative;
+    }
+
+    .select-wrap label {
+      display: block;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--hint);
+      margin-bottom: 4px;
+    }
+
+    select {
+      width: 100%;
+      padding: 8px;
+      font-size: 11px;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+    }
+    
+    .select-wrap::after {
+      content: "▼";
+      position: absolute;
+      right: 10px;
+      bottom: 8px;
+      font-size: 8px;
+      color: var(--hint);
+      pointer-events: none;
+    }
 
     #fullPageBtn {
       background: var(--bg);
@@ -170,6 +211,23 @@
 
   <div class="body">
     <p class="sub">Capture an element or the full page, then paste into the Figma plugin.</p>
+    
+    <div class="select-wrap">
+      <label>Viewport Width</label>
+      <select id="viewportSelect">
+        <option value="current">Current Window Size</option>
+        <option value="1440">Desktop (1440px)</option>
+        <option value="1024">Laptop (1024px)</option>
+        <option value="768">Tablet (768px)</option>
+        <option value="390">Mobile (390px)</option>
+        <option value="custom">Custom...</option>
+      </select>
+    </div>
+
+    <div id="customWidthWrap" style="display: none; margin-bottom: 12px;">
+      <input type="number" id="customWidthInput" placeholder="Width (px)" value="1200" style="width: 100%; padding: 8px; font-size: 11px; font-family: inherit; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); outline: none;">
+    </div>
+
     <div class="btn-group">
       <button id="pickBtn">
         <span class="btn-icon">
@@ -190,6 +248,15 @@
           </svg>
         </span>
         Full page
+      </button>
+      <button id="emulateBtn">
+        <span class="btn-icon">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 6C1 6 3 2 6 2C9 2 11 6 11 6C11 6 9 10 6 10C3 10 1 6 1 6Z" stroke="var(--text)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="6" cy="6" r="2" stroke="var(--text)" stroke-width="1.2"/>
+          </svg>
+        </span>
+        Toggle Emulation
       </button>
     </div>
   </div>
