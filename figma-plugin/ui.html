@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 12px;
+      color: #1E1B2E;
+    }
+    p.hint {
+      margin: 0 0 8px;
+      color: #6E6A85;
+      line-height: 1.4;
+    }
+    textarea {
+      width: 100%;
+      height: 220px;
+      box-sizing: border-box;
+      font: 11px ui-monospace, monospace;
+      padding: 8px;
+      border: 1px solid #E0DEEB;
+      border-radius: 6px;
+      resize: vertical;
+      margin-bottom: 8px;
+    }
+    .row { display: flex; gap: 8px; }
+    button {
+      flex: 1;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    #pasteBtn { background: #F0EEFA; color: #1E1B2E; }
+    #pasteBtn:hover { background: #E4E0F7; }
+    #buildBtn { background: #6E5CFF; color: white; }
+    #buildBtn:hover { background: #7D6CFF; }
+    #buildBtn:disabled { background: #C9C3F0; cursor: default; }
+    #status { margin-top: 8px; font-size: 11px; color: #6E6A85; min-height: 14px; }
+    #status.err { color: #D6455A; }
+    #status.ok { color: #1F9D5C; }
+  </style>
+</head>
+<body>
+  <p class="hint">Paste the JSON copied by the Chrome extension (Cmd/Ctrl+V into the box, or use the paste button), then Build.</p>
+  <textarea id="jsonBox" placeholder='{"version":1,"root":{...}}'></textarea>
+  <div class="row">
+    <button id="pasteBtn">Paste from clipboard</button>
+    <button id="buildBtn">Build in Figma</button>
+  </div>
+  <div id="status"></div>
+
+  <script>
+    const box = document.getElementById("jsonBox");
+    const status = document.getElementById("status");
+
+    function setStatus(text, kind) {
+      status.textContent = text;
+      status.className = kind || "";
+    }
+
+    document.getElementById("pasteBtn").addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        box.value = text;
+        setStatus(`Pasted ${(text.length / 1024).toFixed(1)} KB`, "ok");
+      } catch (e) {
+        setStatus("Clipboard read blocked — use Cmd/Ctrl+V in the box instead.", "err");
+      }
+    });
+
+    document.getElementById("buildBtn").addEventListener("click", () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(box.value);
+      } catch (e) {
+        setStatus("That's not valid JSON.", "err");
+        return;
+      }
+      if (!parsed.root) {
+        setStatus('Missing "root" — did you copy this from the Chrome extension?', "err");
+        return;
+      }
+      setStatus("Building…");
+      parent.postMessage({ pluginMessage: { type: "build", payload: parsed } }, "*");
+    });
+
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+      if (msg.type === "build-done") {
+        setStatus(`Built ${msg.count} layers.`, "ok");
+      } else if (msg.type === "build-error") {
+        setStatus("Error: " + msg.message, "err");
+      }
+    };
+  </script>
+</body>
+</html>
