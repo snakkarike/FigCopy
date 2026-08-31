@@ -407,7 +407,8 @@
         const a = document.createElement("a");
         a.href = url;
         const host = window.location.hostname.replace(/[^a-z0-9]/gi, '-');
-        const tag = target.id ? target.id : target.tagName.toLowerCase();
+        const tagRaw = target.id ? target.id : target.tagName.toLowerCase();
+        const tag = tagRaw.replace(/[^a-z0-9]/gi, '-');
         const d = new Date();
         const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
         a.download = `figcopy-${host}-${tag}-${time}.json`;
