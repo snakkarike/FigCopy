@@ -11,6 +11,7 @@
     "borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius",
     "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
     "borderColor", "borderStyle",
+    "overflow", "overflowX", "overflowY",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "boxShadow"
   ];
@@ -238,7 +239,7 @@
   // ---------- Message bridge to popup ----------
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "CAPTURE_FULL_PAGE") {
-      const data = captureElement(document.body);
+      const data = captureElement(document.documentElement);
       sendResponse({ ok: true, data });
       return true;
     }

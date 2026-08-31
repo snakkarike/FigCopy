@@ -215,7 +215,8 @@ async function buildNode(domNode, originRect, bump) {
     node.name = domNode.text.slice(0, 40);
     node.fontName = fontName;
     node.characters = domNode.text;
-    node.fontSize = px(style.fontSize) || 12;
+    const fontSize = px(style.fontSize) || 12;
+    node.fontSize = fontSize;
 
     if (style.textTransform === "uppercase") node.textCase = "UPPER";
     else if (style.textTransform === "lowercase") node.textCase = "LOWER";
@@ -229,17 +230,23 @@ async function buildNode(domNode, originRect, bump) {
       node.lineHeight = { value: parseFloat(lh), unit: "PIXELS" };
     }
 
+    node.x = domNode.rect.x - originRect.x;
+    node.y = domNode.rect.y - originRect.y;
+    
+    const isMultiline = domNode.rect.height > fontSize * 1.5;
+    if (isMultiline) {
+      node.resize(Math.max(domNode.rect.width + 2, 1), Math.max(domNode.rect.height, 1));
+      node.textAutoResize = "HEIGHT";
+    } else {
+      node.textAutoResize = "WIDTH_AND_HEIGHT";
+    }
+    
     const color = parseColor(style.color) || { color: { r: 0, g: 0, b: 0 }, opacity: 1 };
     node.fills = [{ type: "SOLID", color: color.color, opacity: color.opacity }];
 
     if (style.textAlign === "center") node.textAlignHorizontal = "CENTER";
     else if (style.textAlign === "right") node.textAlignHorizontal = "RIGHT";
     else if (style.textAlign === "justify") node.textAlignHorizontal = "JUSTIFIED";
-
-    node.x = domNode.rect.x - originRect.x;
-    node.y = domNode.rect.y - originRect.y;
-    node.resize(Math.max(domNode.rect.width + 2, 1), Math.max(domNode.rect.height, 1));
-    node.textAutoResize = "HEIGHT";
 
     const opacity = parseFloat(style.opacity);
     if (!isNaN(opacity)) node.opacity = opacity;
@@ -254,45 +261,56 @@ async function buildNode(domNode, originRect, bump) {
   frame.x = domNode.rect.x - originRect.x;
   frame.y = domNode.rect.y - originRect.y;
   frame.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
-  frame.clipsContent = false;
+  
+  const isClipped = style.overflow === "hidden" || style.overflow === "scroll" || style.overflow === "auto" || style.overflowX === "hidden" || style.overflowY === "hidden" || style.overflow === "clip";
+  frame.clipsContent = !!isClipped;
 
   applyCommonStyle(frame, style);
-
+  
   const children = domNode.children || [];
   
   let wantsAutoLayout = false;
   if (style.display === "flex" || style.display === "inline-flex") {
     wantsAutoLayout = true;
     frame.layoutMode = style.flexDirection && style.flexDirection.includes("column") ? "VERTICAL" : "HORIZONTAL";
-  } else if (style.display === "block" || style.display === "grid" || style.display === "list-item" || style.display === "inline-block") {
-    let hasInline = false;
-    for (const child of children) {
-      if (child.tag === "text_leaf") hasInline = true;
-      if (child.styles && child.styles.display && child.styles.display.startsWith("inline")) hasInline = true;
-    }
-    if (children.length === 1 || (!hasInline && children.length > 0)) {
-      wantsAutoLayout = true;
-      frame.layoutMode = "VERTICAL";
-    }
   }
 
   if (wantsAutoLayout) {
-    if (style.display === "flex" || style.display === "inline-flex") {
-      frame.itemSpacing = Math.max(px(style.gap), 0);
-    } else if (children.length > 1) {
-      const gapY = children[1].rect.y - (children[0].rect.y + children[0].rect.height);
-      frame.itemSpacing = Math.max(gapY, 0);
+    const flowChildren = children.filter(c => !(c.styles && (c.styles.position === "absolute" || c.styles.position === "fixed")));
+
+    if (frame.layoutMode === "VERTICAL" && flowChildren.length > 1) {
+      const gapY = flowChildren[1].rect.y - (flowChildren[0].rect.y + flowChildren[0].rect.height);
+      frame.itemSpacing = Math.max(gapY, px(style.gap) || 0, 0);
     } else {
-      frame.itemSpacing = 0;
+      frame.itemSpacing = Math.max(px(style.gap), 0);
     }
-    frame.paddingTop = px(style.paddingTop);
-    frame.paddingRight = px(style.paddingRight);
-    frame.paddingBottom = px(style.paddingBottom);
+
+    if (flowChildren.length > 0) {
+      let minY = Infinity, maxY = -Infinity;
+      for (const child of flowChildren) {
+        if (child.rect.y < minY) minY = child.rect.y;
+        if (child.rect.y + child.rect.height > maxY) maxY = child.rect.y + child.rect.height;
+      }
+      frame.paddingTop = Math.max(minY - domNode.rect.y, 0);
+      frame.paddingBottom = Math.max((domNode.rect.y + domNode.rect.height) - maxY, 0);
+    } else {
+      frame.paddingTop = px(style.paddingTop);
+      frame.paddingBottom = px(style.paddingBottom);
+    }
+
     frame.paddingLeft = px(style.paddingLeft);
+    frame.paddingRight = px(style.paddingRight);
+
     frame.primaryAxisAlignItems = alignPrimary(style.justifyContent);
     frame.counterAxisAlignItems = alignCounter(style.alignItems);
-    frame.primaryAxisSizingMode = "FIXED";
-    frame.counterAxisSizingMode = "FIXED";
+    
+    if (frame.layoutMode === "VERTICAL") {
+      frame.primaryAxisSizingMode = "AUTO";
+      frame.counterAxisSizingMode = "FIXED";
+    } else {
+      frame.primaryAxisSizingMode = "FIXED";
+      frame.counterAxisSizingMode = "AUTO";
+    }
   } else {
     frame.layoutMode = "NONE";
   }
