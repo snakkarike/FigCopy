@@ -6,6 +6,15 @@
   </picture>
 </div>
 
+<div align="center">
+
+  [![Release Version](https://img.shields.io/github/v/release/snakkarike/FigCopy?style=flat-square&color=black)](https://github.com/snakkarike/FigCopy/releases)
+  [![License](https://img.shields.io/badge/license-GPLv3-blue.svg?style=flat-square)](LICENSE)
+  ![Figma Plugin](https://img.shields.io/badge/Figma-Plugin-F24E1E?style=flat-square&logo=figma&logoColor=white)
+  ![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
+  
+</div>
+
 <br/>
 
 **FigCopy** is a developer tool that bridges your live DOM to Figma. It captures layouts, styles, and assets from your browser and reconstructs them into pixel-perfect, fully-editable Figma layers.
