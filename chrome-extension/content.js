@@ -7,13 +7,14 @@
     "display", "flexDirection", "flexWrap", "justifyContent", "alignItems", "gap", "flexGrow",
     "position", "color", "backgroundColor", "backgroundImage", "backgroundSize", "opacity",
     "fontSize", "fontWeight", "fontFamily", "lineHeight", "letterSpacing", "textAlign",
-    "textTransform", "textDecoration",
+    "textTransform", "textDecoration", "content",
     "borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius",
     "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
     "borderColor", "borderStyle",
     "overflow", "overflowX", "overflowY",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "boxShadow"
+    "marginTop", "marginRight", "marginBottom", "marginLeft",
+    "boxShadow", "mask", "webkitMask", "maskImage", "webkitMaskImage"
   ];
 
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE"]);
@@ -47,6 +48,62 @@
     }
   }
 
+  // Synthesize a virtual node for pseudo-elements (::before / ::after)
+  function capturePseudo(el, originRect, pseudoType) {
+    const computed = window.getComputedStyle(el, pseudoType);
+    const content = computed.content;
+    if (!content || content === "none" || content === "normal") return null;
+    if (computed.display === "none" || computed.visibility === "hidden") return null;
+
+    let w = parseFloat(computed.width) || 0;
+    let h = parseFloat(computed.height) || 0;
+    
+    // Ignore empty content with no physical dimensions
+    if ((content === '""' || content === "''") && w === 0 && h === 0) return null;
+
+    const elRect = rectOf(el);
+    let x = elRect.x;
+    let y = elRect.y;
+    
+    if (computed.position === 'absolute') {
+      x += (parseFloat(computed.left) || 0);
+      y += (parseFloat(computed.top) || 0);
+    }
+    
+    const node = {
+      tag: "div", // treat it as a generic box
+      isPseudo: true,
+      pseudoType: pseudoType,
+      rect: {
+        x: Math.round(x - originRect.x),
+        y: Math.round(y - originRect.y),
+        width: Math.round(w),
+        height: Math.round(h)
+      },
+      styles: collectStyles(computed),
+      children: []
+    };
+    
+    if (content !== '""' && content !== "''" && !content.startsWith("url(")) {
+       const text = content.replace(/^["'](.*)["']$/, '$1');
+       if (text) {
+          node.children.push({
+            tag: "text_leaf",
+            text: text,
+            rect: node.rect,
+            styles: node.styles
+          });
+       }
+    }
+    
+    if (content.startsWith("url(")) {
+       node.tag = "img";
+       node.image = content.match(/url\(([^)]+)\)/)[1].replace(/["']/g, "");
+    }
+    
+    return node;
+  }
+
   function serialize(el, originRect, depth) {
     if (nodeCount > MAX_NODES) return null;
     if (el.nodeType !== 1) return null;
@@ -78,11 +135,19 @@
       return node;
     }
 
-    if (el.tagName === "CANVAS") {
+    if (el.tagName === "CANVAS" || el.tagName === "VIDEO") {
+      if (el.tagName === "VIDEO") {
+        node.videoSrc = el.currentSrc || el.src || null;
+      }
       try {
-        node.image = el.toDataURL("image/png");
+        const canvas = document.createElement("canvas");
+        canvas.width = el.videoWidth || el.width || el.getBoundingClientRect().width || 1;
+        canvas.height = el.videoHeight || el.height || el.getBoundingClientRect().height || 1;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(el, 0, 0, canvas.width, canvas.height);
+        node.image = canvas.toDataURL("image/png");
       } catch (e) {
-        node.image = null; // Silently fallback if canvas is tainted
+        node.image = el.poster || null; // fallback for cross-origin videos
       }
       return node;
     }
@@ -98,13 +163,56 @@
           if (comp.color) cloneNode.setAttribute("color", comp.color);
         }
         for (let i = 0; i < originalNode.childNodes.length; i++) {
-          inlineSvgStyles(originalNode.childNodes[i], cloneNode.childNodes[i]);
+          if (cloneNode.childNodes[i]) {
+            inlineSvgStyles(originalNode.childNodes[i], cloneNode.childNodes[i]);
+          }
         }
       }
       inlineSvgStyles(el, clone);
       node.svg = clone.outerHTML;
       return node;
     }
+
+    // ---- Mask-icon leaf (background-color shaped by -webkit-mask SVG) ----
+    // e.g. Framer icon divs that use `background-color + -webkit-mask: url(data:image/svg+xml,...)`
+    const maskCss = computed.getPropertyValue("-webkit-mask") ||
+                    computed.getPropertyValue("mask") ||
+                    computed.getPropertyValue("mask-image") ||
+                    computed.getPropertyValue("-webkit-mask-image") || "";
+    const hasMaskSvg = maskCss.includes("data:image/svg+xml");
+    const hasNoMeaningfulChildren = el.children.length === 0 ||
+      [...el.children].every(c => {
+        const cs = window.getComputedStyle(c);
+        return cs.display === "none" || cs.visibility === "hidden";
+      });
+
+    if (hasMaskSvg && hasNoMeaningfulChildren) {
+      // Extract the raw SVG string from the data URL embedded in the mask
+      const dataPrefix = "data:image/svg+xml";
+      const start = maskCss.indexOf(dataPrefix);
+      let svgStr = null;
+      if (start !== -1) {
+        // Find the closing </svg> tag
+        const svgEnd = maskCss.indexOf("</svg>", start);
+        if (svgEnd !== -1) {
+          const rawUrl = maskCss.substring(start, svgEnd + 6);
+          // URL-decode (these are usually url-encoded, not base64)
+          try { svgStr = decodeURIComponent(rawUrl.replace(/^data:image\/svg\+xml,/, "")); } catch(e) { svgStr = rawUrl.replace(/^data:image\/svg\+xml,/, ""); }
+        }
+      }
+
+      if (svgStr) {
+        // Resolve the background-color (the fill color for the icon)
+        const resolvedBg = computed.getPropertyValue("background-color");
+        node.tag = "mask_svg_icon";
+        node.maskSvg = svgStr;
+        node.iconColor = resolvedBg && resolvedBg !== "rgba(0, 0, 0, 0)" ? resolvedBg : "rgb(0,0,0)";
+        return node;
+      }
+    }
+
+    const pseudoBefore = capturePseudo(el, originRect, "::before");
+    if (pseudoBefore) node.children.push(pseudoBefore);
 
     for (const child of el.childNodes) {
       if (child.nodeType === 1) { // ELEMENT_NODE
@@ -130,6 +238,9 @@
         }
       }
     }
+
+    const pseudoAfter = capturePseudo(el, originRect, "::after");
+    if (pseudoAfter) node.children.push(pseudoAfter);
 
     const isTextInput = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (!el.type || ["text", "password", "email", "search", "number", "tel", "url"].includes(el.type.toLowerCase())));
     if (isTextInput || el.tagName === "SELECT") {
@@ -219,8 +330,11 @@
     hoverBox.setAttribute("data-figcopy-ignore", "true");
     hoverBox.style.cssText = `
       position: fixed; pointer-events: none; z-index: 2147483647;
-      border: 2px solid #6E5CFF; background: rgba(110,92,255,0.12);
-      transition: all 60ms ease-out;
+      outline: 2px solid #fff;
+      outline-offset: -2px;
+      box-shadow: inset 0 0 0 4px #000, 0 0 0 2px #000;
+      background: rgba(255,255,255,0.05);
+      transition: left 40ms, top 40ms, width 40ms, height 40ms;
     `;
     document.documentElement.appendChild(hoverBox);
     return hoverBox;
@@ -236,17 +350,40 @@
     box.style.height = r.height + "px";
   }
 
-  function showToast(text) {
+  function showToast(text, kind) {
+    // Remove any existing toast first
+    document.querySelectorAll('[data-figcopy-toast]').forEach(t => t.remove());
+    
     const toast = document.createElement("div");
     toast.setAttribute("data-figcopy-ignore", "true");
-    toast.textContent = text;
-    toast.style.cssText = `
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: #1E1B2E; color: #fff; padding: 10px 16px; border-radius: 8px;
-      font: 13px -apple-system, sans-serif; z-index: 2147483647; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    toast.setAttribute("data-figcopy-toast", "true");
+    
+    const dot = document.createElement("span");
+    const label = document.createElement("span");
+    label.textContent = text;
+
+    const dotColor = kind === "err" ? "#f66" : "#fff";
+    dot.style.cssText = `
+      display: inline-block; width: 6px; height: 6px;
+      background: ${dotColor}; flex-shrink: 0; margin-top: 1px;
     `;
+
+    toast.style.cssText = `
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: #000; color: #fff;
+      padding: 10px 14px;
+      font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.02em;
+      z-index: 2147483647;
+      display: flex; align-items: flex-start; gap: 8px;
+      white-space: nowrap;
+      border: 1px solid #000;
+      box-shadow: 3px 3px 0 rgba(0,0,0,0.15);
+    `;
+    toast.appendChild(dot);
+    toast.appendChild(label);
     document.documentElement.appendChild(toast);
-    setTimeout(() => toast.remove(), 2200);
+    setTimeout(() => toast.remove(), 2500);
   }
 
   function onClick(e) {
@@ -295,7 +432,7 @@
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "CAPTURE_FULL_PAGE") {
       (async () => {
-        showToast("Scrolling page to trigger animations...");
+        showToast("Scrolling to trigger animations…");
         
         // Auto-scroll to trigger IntersectionObservers
         const scrollHeight = document.body.scrollHeight;
@@ -345,6 +482,10 @@
     }
     if (msg.type === "CANCEL_PICKER") {
       stopPicking();
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (msg.type === "PING") {
       sendResponse({ ok: true });
       return true;
     }

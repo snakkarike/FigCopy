@@ -3,89 +3,269 @@
 <head>
   <meta charset="utf-8" />
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     body {
-      font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 12px;
-      color: #1E1B2E;
+      background: #fff;
+      color: #000;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
-    p.hint {
-      margin: 0 0 8px;
-      color: #6E6A85;
-      line-height: 1.4;
+
+    .header {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    textarea {
-      width: 100%;
-      height: 220px;
-      box-sizing: border-box;
-      font: 11px ui-monospace, monospace;
-      padding: 8px;
-      border: 1px solid #E0DEEB;
-      border-radius: 6px;
-      resize: vertical;
-      margin-bottom: 8px;
+
+    .header-icon {
+      width: 18px;
+      height: 18px;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
-    .row { display: flex; gap: 8px; }
-    button {
-      flex: 1;
-      padding: 8px 10px;
-      border: none;
-      border-radius: 6px;
+
+    .header-icon svg { display: block; }
+
+    .header-title {
       font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
-    #pasteBtn { background: #F0EEFA; color: #1E1B2E; }
-    #pasteBtn:hover { background: #E4E0F7; }
-    #buildBtn { background: #6E5CFF; color: white; }
-    #buildBtn:hover { background: #7D6CFF; }
-    #buildBtn:disabled { background: #C9C3F0; cursor: default; }
-    #status { margin-top: 8px; font-size: 11px; color: #6E6A85; min-height: 14px; }
-    #status.err { color: #D6455A; }
-    #status.ok { color: #1F9D5C; }
+
+    .body {
+      flex: 1;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: #666;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    .hint strong { color: #000; font-weight: 600; }
+
+    .textarea-wrap {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    textarea {
+      flex: 1;
+      width: 100%;
+      font: 10.5px ui-monospace, "SF Mono", Consolas, monospace;
+      padding: 10px;
+      border: 1px solid #000;
+      border-radius: 0;
+      resize: none;
+      background: #fafafa;
+      color: #000;
+      outline: none;
+      transition: background 0.1s, border-color 0.1s;
+    }
+
+    textarea:focus {
+      background: #fff;
+      border-color: #000;
+    }
+
+    textarea.ready {
+      border-color: #000;
+      background: #fff;
+    }
+
+    textarea::placeholder {
+      color: #bbb;
+    }
+
+    /* Paste hint overlay — shown when textarea is empty and focused */
+    .paste-hint {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    textarea:focus:placeholder-shown + .paste-hint {
+      opacity: 1;
+    }
+
+    .paste-hint .key {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      color: #fff;
+      font: 700 11px/1 -apple-system, sans-serif;
+      letter-spacing: 0.05em;
+      padding: 5px 10px;
+    }
+
+    .paste-hint .key-label {
+      font-size: 10px;
+      color: #888;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .build-btn {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #000;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      background: #000;
+      color: #fff;
+      transition: background 0.1s;
+    }
+
+    .build-btn:hover { background: #222; }
+    .build-btn:disabled { background: #888; border-color: #888; cursor: default; }
+
+    .status-bar {
+      padding: 7px 16px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 10.5px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #666;
+    }
+
+    .status-bar .dot {
+      width: 6px;
+      height: 6px;
+      flex-shrink: 0;
+      background: #bbb;
+    }
+
+    .status-bar.err .dot { background: #000; }
+    .status-bar.err { color: #000; }
+    .status-bar.ok .dot { background: #000; }
+    .status-bar.ok { color: #000; }
+    .status-bar.loading .dot { animation: pulse 0.8s infinite alternate; }
+
+    @keyframes pulse {
+      from { opacity: 1; }
+      to { opacity: 0.2; }
+    }
+
+    #statusText { flex: 1; }
   </style>
 </head>
 <body>
-  <p class="hint">Paste the JSON copied by the Chrome extension (Cmd/Ctrl+V into the box, or use the paste button), then Build.</p>
-  <textarea id="jsonBox" placeholder='{"version":1,"root":{...}}'></textarea>
-  <div class="row">
-    <button id="pasteBtn">Paste from clipboard</button>
-    <button id="buildBtn">Build in Figma</button>
+  <div class="header">
+    <div class="header-icon">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="4.5" height="4.5" fill="white"/>
+        <rect x="5.5" width="4.5" height="4.5" fill="white"/>
+        <rect y="5.5" width="4.5" height="4.5" fill="white"/>
+        <rect x="5.5" y="5.5" width="4.5" height="4.5" fill="white"/>
+      </svg>
+    </div>
+    <span class="header-title">FigCopy</span>
   </div>
-  <div id="status"></div>
+
+  <div class="body">
+    <p class="hint">Click in the box and press <strong>Ctrl+V</strong> (or ⌘V) to paste JSON from the extension, then build.</p>
+    <div class="textarea-wrap">
+      <textarea id="jsonBox" placeholder='{"version":1,"root":{...}}'></textarea>
+      <div class="paste-hint">
+        <span class="key">Ctrl + V</span>
+        <span class="key-label">Paste JSON here</span>
+      </div>
+    </div>
+    <button class="build-btn" id="buildBtn">Build in Figma</button>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    <div class="dot"></div>
+    <span id="statusText">Click the box and paste JSON from the extension</span>
+  </div>
 
   <script>
     const box = document.getElementById("jsonBox");
-    const status = document.getElementById("status");
+    const statusBar = document.getElementById("statusBar");
+    const statusText = document.getElementById("statusText");
+    const buildBtn = document.getElementById("buildBtn");
 
     function setStatus(text, kind) {
-      status.textContent = text;
-      status.className = kind || "";
+      statusText.textContent = text;
+      statusBar.className = "status-bar" + (kind ? " " + kind : "");
     }
 
-    document.getElementById("pasteBtn").addEventListener("click", async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        box.value = text;
-        setStatus(`Pasted ${(text.length / 1024).toFixed(1)} KB`, "ok");
-      } catch (e) {
-        setStatus("Clipboard read blocked — use Cmd/Ctrl+V in the box instead.", "err");
-      }
+    // Auto-detect paste into the textarea — no clipboard API needed
+    box.addEventListener("paste", (e) => {
+      // Let the native paste happen first, then validate on next tick
+      setTimeout(() => {
+        const val = box.value.trim();
+        if (!val) return;
+        try {
+          const parsed = JSON.parse(val);
+          if (parsed.root) {
+            setStatus(`Ready — ${(val.length / 1024).toFixed(1)} KB pasted. Click Build.`, "ok");
+            box.classList.add("ready");
+          } else {
+            setStatus('Pasted, but missing "root" key — copy from the extension.', "err");
+          }
+        } catch (e) {
+          setStatus("Pasted content is not valid JSON.", "err");
+        }
+      }, 0);
     });
 
-    document.getElementById("buildBtn").addEventListener("click", () => {
+    box.addEventListener("input", () => {
+      box.classList.remove("ready");
+      setStatus("Click the box and paste JSON from the extension", "");
+    });
+
+    buildBtn.addEventListener("click", () => {
+      const val = box.value.trim();
+      if (!val) {
+        setStatus("Nothing pasted yet — click the box and press Ctrl+V.", "err");
+        return;
+      }
       let parsed;
       try {
-        parsed = JSON.parse(box.value);
+        parsed = JSON.parse(val);
       } catch (e) {
-        setStatus("That's not valid JSON.", "err");
+        setStatus("Invalid JSON.", "err");
         return;
       }
       if (!parsed.root) {
-        setStatus('Missing "root" — did you copy this from the Chrome extension?', "err");
+        setStatus('Missing "root" key — copy from the extension first.', "err");
         return;
       }
-      setStatus("Building…");
+      setStatus("Building…", "loading");
+      buildBtn.disabled = true;
       parent.postMessage({ pluginMessage: { type: "build", payload: parsed } }, "*");
     });
 
@@ -93,9 +273,72 @@
       const msg = event.data.pluginMessage;
       if (!msg) return;
       if (msg.type === "build-done") {
-        setStatus(`Built ${msg.count} layers.`, "ok");
+        buildBtn.disabled = false;
+        box.value = "";
+        box.classList.remove("ready");
+        setStatus(`Done — ${msg.count} layers built.`, "ok");
       } else if (msg.type === "build-error") {
+        buildBtn.disabled = false;
         setStatus("Error: " + msg.message, "err");
+      } else if (msg.type === "decode-image") {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0);
+            parent.postMessage({ pluginMessage: { type: "image-decoded", url: msg.url, data: canvas.toDataURL("image/png") } }, "*");
+          } catch (e) {
+            parent.postMessage({ pluginMessage: { type: "image-decode-failed", url: msg.url } }, "*");
+          }
+        };
+        img.onerror = () => {
+          parent.postMessage({ pluginMessage: { type: "image-decode-failed", url: msg.url } }, "*");
+        };
+        img.src = msg.url;
+      } else if (msg.type === "render-gradient") {
+        // Parse background-size into pixel tile dimensions.
+        // Supports "40px 40px", "100% 100%", "cover", etc.
+        // For percentage/keyword sizes, fall back to a 200x200 tile.
+        let tileW = 200, tileH = 200;
+        if (msg.bgSize && msg.bgSize !== "auto" && msg.bgSize !== "cover" && msg.bgSize !== "contain") {
+          const parts = msg.bgSize.split(/\s+/);
+          const pw = parseFloat(parts[0]);
+          const ph = parseFloat(parts[1] || parts[0]);
+          if (!isNaN(pw) && pw > 0 && pw <= 2000) tileW = Math.round(pw);
+          if (!isNaN(ph) && ph > 0 && ph <= 2000) tileH = Math.round(ph);
+        }
+
+        // The foreignObject SVG trick: wrap a styled div inside an SVG foreignObject,
+        // serialize to data: URL, draw onto a canvas. This preserves all CSS rendering
+        // including multi-layer gradients, CSS variables already resolved.
+        const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="${tileW}" height="${tileH}">
+          <foreignObject width="${tileW}" height="${tileH}">
+            <div xmlns="http://www.w3.org/1999/xhtml" style="width:${tileW}px;height:${tileH}px;background-image:${msg.bgImage.replace(/"/g, "'")};background-size:${msg.bgSize};margin:0;padding:0;"></div>
+          </foreignObject>
+        </svg>`;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = tileW;
+        canvas.height = tileH;
+        const ctx = canvas.getContext("2d");
+        const img2 = new Image();
+        img2.onload = () => {
+          try {
+            ctx.drawImage(img2, 0, 0);
+            const dataUrl = canvas.toDataURL("image/png");
+            parent.postMessage({ pluginMessage: { type: "gradient-rendered", key: msg.key, data: dataUrl } }, "*");
+          } catch(e) {
+            parent.postMessage({ pluginMessage: { type: "gradient-render-failed", key: msg.key } }, "*");
+          }
+        };
+        img2.onerror = () => {
+          parent.postMessage({ pluginMessage: { type: "gradient-render-failed", key: msg.key } }, "*");
+        };
+        img2.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgStr);
       }
     };
   </script>

@@ -1,8 +1,9 @@
 const statusEl = document.getElementById("status");
+const statusText = document.getElementById("statusText");
 
 function setStatus(text, kind) {
-  statusEl.textContent = text;
-  statusEl.className = kind || "";
+  statusText.textContent = text;
+  statusEl.className = "status-bar" + (kind ? " " + kind : "");
 }
 
 async function getActiveTab() {
@@ -10,13 +11,40 @@ async function getActiveTab() {
   return tab;
 }
 
+// Injects the content script if it hasn't been injected yet (e.g. after extension reload),
+// then sends a message. Returns true if the message was sent successfully.
+async function ensureContentScript(tabId) {
+  try {
+    // Ping the content script first.
+    await chrome.tabs.sendMessage(tabId, { type: "PING" });
+    return true;
+  } catch (_) {
+    // Not injected yet — inject it now.
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["content.js"],
+      });
+      return true;
+    } catch (err) {
+      setStatus("Can't inject script on this page.", "err");
+      return false;
+    }
+  }
+}
+
 document.getElementById("pickBtn").addEventListener("click", async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus("No active tab.", "err");
-  setStatus("Click any element on the page… (Esc to cancel)");
+
+  const ok = await ensureContentScript(tab.id);
+  if (!ok) return;
+
+  setStatus("Click any element… (Esc to cancel)");
   chrome.tabs.sendMessage(tab.id, { type: "START_PICKER" }, () => {
-    // Popup closes as soon as the user clicks the page — that's expected.
-    // The content script copies to clipboard itself and shows an on-page toast.
+    if (chrome.runtime.lastError) {
+      // popup may already be closed — that's fine
+    }
     window.close();
   });
 });
@@ -24,7 +52,11 @@ document.getElementById("pickBtn").addEventListener("click", async () => {
 document.getElementById("fullPageBtn").addEventListener("click", async () => {
   const tab = await getActiveTab();
   if (!tab) return setStatus("No active tab.", "err");
-  setStatus("Capturing…");
+
+  const ok = await ensureContentScript(tab.id);
+  if (!ok) return;
+
+  setStatus("Capturing…", "loading");
   chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE" }, async (response) => {
     if (chrome.runtime.lastError || !response || !response.ok) {
       setStatus("Couldn't reach the page. Try reloading it.", "err");
