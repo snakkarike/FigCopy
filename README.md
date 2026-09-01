@@ -31,12 +31,18 @@ It consists of two halves working together:
 ## 🚀 Installation
 
 ### 1. Install the Chrome Extension
+**👉 [Install FigCopy from the Chrome Web Store](https://chromewebstore.google.com/detail/dgicflhidpedgnenockjkmgjcipngdaf)**
+
+*(Alternatively, for local development)*
 1. Go to `chrome://extensions` in your browser.
 2. Toggle **Developer mode** on (top right corner).
 3. Click **Load unpacked**, and select the `chrome-extension/` folder from this repo.
 4. Pin the extension to your toolbar for easy access!
 
 ### 2. Install the Figma Plugin
+**👉 [Install FigCopy from the Figma Community](https://www.figma.com/community/plugin/1676506414018355372)**
+
+*(Alternatively, for local development)*
 1. Open the Figma desktop app.
 2. Go to **Plugins → Development → Import plugin from manifest…**
 3. Select the `figma-plugin/manifest.json` file.

@@ -37,8 +37,12 @@ figma.ui.onmessage = async (msg) => {
   if (msg.type !== "build") return;
   try {
     let count = 0;
-    const root = msg.payload.root;
+    let root = msg.payload.root;
     if (!root) throw new Error("No root node in payload");
+
+    if (msg.reduceLayers) {
+      root = collapseTree(root);
+    }
 
     const totalNodes = countNodes(root);
     const bump = () => {
@@ -73,6 +77,81 @@ function countNodes(node, depth = 0, state = { count: 0 }) {
     for (const child of node.children) count += countNodes(child, depth + 1, state);
   }
   return count;
+}
+
+function collapseTree(node) {
+  if (!node || !node.children || node.children.length === 0) return node;
+
+  for (let i = 0; i < node.children.length; i++) {
+    node.children[i] = collapseTree(node.children[i]);
+  }
+
+  if (
+    node.children.length === 1 &&
+    node.children[0].tag &&
+    node.children[0].tag !== "mask_svg_icon"
+  ) {
+    const child = node.children[0];
+    const styles = node.styles || {};
+    
+    const bg = styles.backgroundColor;
+    const hasBg = bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent";
+    const hasBgImg = styles.backgroundImage && styles.backgroundImage !== "none";
+    const hasShadow = styles.boxShadow && styles.boxShadow !== "none";
+    
+    const t = parseFloat(styles.borderTopWidth) || 0;
+    const r = parseFloat(styles.borderRightWidth) || 0;
+    const b = parseFloat(styles.borderBottomWidth) || 0;
+    const l = parseFloat(styles.borderLeftWidth) || 0;
+    const hasBorder = (t > 0 || r > 0 || b > 0 || l > 0) && styles.borderStyle !== "none";
+    
+    const opacity = parseFloat(styles.opacity);
+    const hasOpacity = !isNaN(opacity) && opacity < 1;
+    
+    const overflow = styles.overflow || "";
+    const isClipped = overflow === "hidden" || overflow === "clip";
+    
+    const sameWidth = Math.abs(node.rect.width - child.rect.width) < 1;
+    const sameHeight = Math.abs(node.rect.height - child.rect.height) < 1;
+    
+    // Don't collapse if the parent has meaningful padding (it contributes to layout)
+    const pt = parseFloat(styles.paddingTop) || 0;
+    const pb = parseFloat(styles.paddingBottom) || 0;
+    const pl = parseFloat(styles.paddingLeft) || 0;
+    const pr = parseFloat(styles.paddingRight) || 0;
+    const hasPadding = pt > 0 || pb > 0 || pl > 0 || pr > 0;
+    
+    if (!hasBg && !hasBgImg && !hasShadow && !hasBorder && !hasOpacity && !isClipped && !hasPadding && sameWidth && sameHeight) {
+      if (!child.styles) child.styles = {};
+      
+      if (styles.position === "absolute" || styles.position === "fixed") {
+        child.styles.position = styles.position;
+      }
+      
+      const mt = parseFloat(styles.marginTop) || 0;
+      const mb = parseFloat(styles.marginBottom) || 0;
+      const ml = parseFloat(styles.marginLeft) || 0;
+      const mr = parseFloat(styles.marginRight) || 0;
+      
+      if (mt || mb || ml || mr) {
+        child.styles.marginTop = ((parseFloat(child.styles.marginTop) || 0) + mt) + "px";
+        child.styles.marginBottom = ((parseFloat(child.styles.marginBottom) || 0) + mb) + "px";
+        child.styles.marginLeft = ((parseFloat(child.styles.marginLeft) || 0) + ml) + "px";
+        child.styles.marginRight = ((parseFloat(child.styles.marginRight) || 0) + mr) + "px";
+      }
+      
+      const flexGrow = parseFloat(styles.flexGrow) || 0;
+      if (flexGrow > 0) {
+        child.styles.flexGrow = Math.max(parseFloat(child.styles.flexGrow) || 0, flexGrow).toString();
+      }
+
+      if (node.tag !== "div" && node.tag !== "span") {
+        child.tag = node.tag;
+      }
+      return child;
+    }
+  }
+  return node;
 }
 
 function oklabToRgb(L, a, b) {
@@ -168,9 +247,13 @@ function parseColor(str) {
     const m = str.match(/lab\(([^)]+)\)/);
     if (m) {
       const parts = m[1].replace(/[\/%]/g, " ").split(/[\s,]+/).filter(Boolean).map(parseFloat);
-      if (parts.length > 0 && !isNaN(parts[0])) {
-        const l = parts[0] > 1 ? parts[0]/100 : parts[0];
-        return { color: { r: l, g: l, b: l }, opacity: parts.length > 3 ? parts[3] : 1 };
+      if (parts.length >= 3 && !isNaN(parts[0])) {
+        // Approximate Lab->RGB via oklab pathway (good enough for design use)
+        // Lab: L in 0-100, a/b in approx -128 to 128
+        const L = (parts[0] > 1 ? parts[0] / 100 : parts[0]);
+        const a = parts[1] / 128;
+        const b = parts[2] / 128;
+        return { color: oklabToRgb(L, a, b), opacity: parts.length > 3 ? parts[3] : 1 };
       }
     }
   }
@@ -212,40 +295,83 @@ function alignCounter(val) {
 }
 
 function fontStyleFor(fontWeight) {
+  // Handle keyword values first, before parseInt (parseInt('bold') === NaN)
+  if (fontWeight === "bold" || fontWeight === "bolder") return "Bold";
+  if (fontWeight === "lighter") return "Regular";
   const w = parseInt(fontWeight, 10);
   if (!isNaN(w)) {
     if (w >= 700) return "Bold";
     if (w >= 500) return "Medium";
     return "Regular";
   }
-  if (fontWeight === "bold") return "Bold";
   return "Regular";
 }
 
-function getPrimaryFont(fontFamilyStr) {
-  if (!fontFamilyStr) return "Inter";
-  const first = fontFamilyStr.split(",")[0].trim();
-  const family = first.replace(/['"]/g, "");
-  return family || "Inter";
+function getFontFamilyStack(fontFamilyStr) {
+  if (!fontFamilyStr) return ["Inter"];
+  const families = fontFamilyStr.split(",").map(p => p.trim().replace(/['"]/g, "")).filter(Boolean);
+  return families.length > 0 ? families : ["Inter"];
 }
 
-async function loadFontSafe(family, style) {
-  try {
-    await figma.loadFontAsync({ family, style });
-    return { family, style };
-  } catch (e) {
+const GENERIC_FONT_FAMILIES = new Set(["sans-serif", "serif", "monospace", "system-ui", "cursive", "fantasy", "ui-sans-serif", "ui-serif", "ui-monospace"]);
+
+let availableFontsCache = null;
+async function getAvailableFonts() {
+  if (!availableFontsCache) {
     try {
-      await figma.loadFontAsync({ family, style: "Regular" });
-      return { family, style: "Regular" };
-    } catch (e2) {
+      availableFontsCache = await figma.listAvailableFontsAsync();
+    } catch (e) {
+      availableFontsCache = [];
+    }
+  }
+  return availableFontsCache;
+}
+
+async function loadFontSafe(fontFamilyStr, requestedStyle) {
+  const families = getFontFamilyStack(fontFamilyStr);
+  const stylesToTry = [requestedStyle, "Regular", "Normal", "Book", "Medium", "Auto"];
+  const uniqueStyles = [...new Set(stylesToTry)];
+
+  // Fast path: try exact family+style matches
+  for (const family of families) {
+    if (GENERIC_FONT_FAMILIES.has(family.toLowerCase())) continue;
+    
+    for (const style of uniqueStyles) {
       try {
-        await figma.loadFontAsync({ family: "Inter", style });
-        return { family: "Inter", style };
-      } catch (e3) {
-        await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-        return { family: "Inter", style: "Regular" };
+        await figma.loadFontAsync({ family, style });
+        return { family, style };
+      } catch (e) {}
+    }
+  }
+
+  // Slow path: fuzzy match against all Figma fonts
+  // Handles fonts where the style is baked into the family name (e.g. "Geist Pixel" -> { family: "Geist", style: "Pixel" })
+  const allFonts = await getAvailableFonts();
+  for (const family of families) {
+    if (GENERIC_FONT_FAMILIES.has(family.toLowerCase())) continue;
+    
+    const normalizedTarget = family.toLowerCase().replace(/[\s-]/g, "");
+    
+    for (const font of allFonts) {
+      const fFam = font.fontName.family.toLowerCase().replace(/[\s-]/g, "");
+      const fFull = (font.fontName.family + font.fontName.style).toLowerCase().replace(/[\s-]/g, "");
+      
+      if (fFam === normalizedTarget || fFull === normalizedTarget || fFull.includes(normalizedTarget)) {
+        try {
+          await figma.loadFontAsync(font.fontName);
+          return font.fontName;
+        } catch (e) {}
       }
     }
+  }
+
+  // Ultimate fallback to Inter
+  try {
+    await figma.loadFontAsync({ family: "Inter", style: requestedStyle });
+    return { family: "Inter", style: requestedStyle };
+  } catch (e) {
+    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+    return { family: "Inter", style: "Regular" };
   }
 }
 
@@ -353,12 +479,13 @@ function applyCommonStyle(node, styles) {
   if (!styles) return;
 
   const bg = parseColor(styles.backgroundColor);
-  if (bg && "fills" in node) {
-    const existing = Array.isArray(node.fills) ? [...node.fills].filter(f => f.type !== "SOLID") : [];
-    node.fills = [...existing, { type: "SOLID", color: bg.color, opacity: bg.opacity }];
-  } else if ("fills" in node) {
-    const existing = Array.isArray(node.fills) ? [...node.fills].filter(f => f.type !== "SOLID") : [];
-    node.fills = existing;
+  if ("fills" in node) {
+    const existing = Array.isArray(node.fills) ? node.fills.filter(f => f.type !== "SOLID") : [];
+    if (bg) {
+      node.fills = [...existing, { type: "SOLID", color: bg.color, opacity: bg.opacity }];
+    } else {
+      node.fills = existing;
+    }
   }
 
   const borderColor = parseColor(styles.borderColor);
@@ -533,8 +660,7 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
   if (domNode.tag === "text_leaf" || domNode.text) {
     const style = domNode.styles || {};
     const fontStyle = fontStyleFor(style.fontWeight);
-    const family = getPrimaryFont(style.fontFamily);
-    const fontName = await loadFontSafe(family, fontStyle);
+    const fontName = await loadFontSafe(style.fontFamily, fontStyle);
 
     const node = figma.createText();
     node.name = domNode.text.slice(0, 40);
@@ -592,7 +718,7 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
 
   applyCommonStyle(frame, style);
   
-  const children = domNode.children ? [...domNode.children] : [];
+  const children = domNode.children || [];
   
   let wantsAutoLayout = false;
   if (style.display === "flex" || style.display === "inline-flex") {
@@ -601,12 +727,10 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
   } else if (style.display === "block" || style.display === "inline-block" || style.display === "list-item" || style.display === "inline" || style.display === "table-cell") {
     wantsAutoLayout = true;
     let hasBlockChild = false;
-    if (domNode.children) {
-      for (const child of domNode.children) {
-        if (child.tag !== "text_leaf" && child.styles && (child.styles.display === "block" || child.styles.display === "flex" || child.styles.display === "grid" || child.styles.display === "list-item" || child.styles.display === "table" || child.styles.display === "table-row")) {
-          hasBlockChild = true;
-          break;
-        }
+    for (const child of children) {
+      if (child.tag !== "text_leaf" && child.styles && (child.styles.display === "block" || child.styles.display === "flex" || child.styles.display === "grid" || child.styles.display === "list-item" || child.styles.display === "table" || child.styles.display === "table-row")) {
+        hasBlockChild = true;
+        break;
       }
     }
     if (hasBlockChild) {
@@ -658,16 +782,11 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
           const bgSvgNode = figma.createNodeFromSvg(processSvgString(bgSvgStr));
           bgSvgNode.name = "background-image";
           bgSvgNode.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
-          
-          frame.appendChild(bgSvgNode);
+          bgSvgNode.x = 0;
+          bgSvgNode.y = 0;
           if (wantsAutoLayout) {
             bgSvgNode.layoutPositioning = "ABSOLUTE";
-            bgSvgNode.x = 0;
-            bgSvgNode.y = 0;
             bgSvgNode.constraints = { horizontal: "STRETCH", vertical: "STRETCH" };
-          } else {
-            bgSvgNode.x = 0;
-            bgSvgNode.y = 0;
           }
           frame.insertChild(0, bgSvgNode);
         } catch (e) {
@@ -678,20 +797,35 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
   }
 
   for (const child of children) {
-    if (child.tag === "option" || child.tag === "optgroup" || child.tag === "datalist") continue;
+    if (child.tag === "option" || child.tag === "optgroup" || child.tag === "datalist" || child.tag === "br") continue;
+
+    // Skip pure interaction overlays: absolute/fixed, no visual style, no children.
+    // These are click-capture divs (common in Next.js/React link wrappers) that render as blank frames in Figma.
+    // We skip ANY such empty invisible element — size relative to parent doesn't matter since they can never display content.
+    if (child.styles && (child.styles.position === "absolute" || child.styles.position === "fixed") && (!child.children || child.children.length === 0)) {
+      const cs = child.styles;
+      const bg = cs.backgroundColor;
+      const hasBg = bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent";
+      const hasBorder = (parseFloat(cs.borderTopWidth) || 0) > 0 || (parseFloat(cs.borderLeftWidth) || 0) > 0;
+      const hasShadow = cs.boxShadow && cs.boxShadow !== "none";
+      if (!hasBg && !hasBorder && !hasShadow) { bump(); continue; }
+    }
+
     const childNode = await buildNode(child, domNode.rect, bump, depth + 1);
     
     const origX = childNode.x;
     const origY = childNode.y;
     
-    const childCenterX = child.rect.x + (child.rect.width / 2);
-    const parentCenterX = domNode.rect.x + (domNode.rect.width / 2);
-    const isCenteredX = Math.abs(childCenterX - parentCenterX) < 50;
-    const isFullBleed = origX <= -5 && child.rect.width >= domNode.rect.width;
-    const shouldCenter = isCenteredX || isFullBleed;
-    
+    // Only center-wrap if the child genuinely overflows both sides of the parent
+    // (i.e. is wider than parent AND bleeds negative on the left — a true centered-overflow scenario).
+    // A child that merely has the same center as the parent (isCenteredX) but fits inside it
+    // does NOT need a wrapper — it will be laid out correctly by Auto Layout.
+    const overflowsLeft = origX < -5;
+    const overflowsRight = (origX + child.rect.width) > (domNode.rect.width + 5);
+    const shouldCenter = overflowsLeft && overflowsRight;
+
     frame.appendChild(childNode);
-    
+
     if (wantsAutoLayout && child.styles) {
       if (child.styles.position === "absolute" || child.styles.position === "fixed") {
         try {
@@ -784,10 +918,6 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
             if (hadGrow) {
               try { wrapper.layoutGrow = 1; } catch(e) {}
               try { currentNode.layoutAlign = "STRETCH"; } catch(e) {}
-            }
-            
-            if (!isNaN(flexGrow) && flexGrow > 0) {
-              try { wrapper.layoutGrow = 1; } catch(e) {}
             }
             
             currentNode = wrapper;

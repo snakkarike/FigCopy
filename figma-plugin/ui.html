@@ -354,6 +354,12 @@
         <div id="textProgressFill"></div>
       </div>
     </div>
+    <div style="display: flex; gap: 8px; margin-top: 4px;">
+      <label style="font-size: 11px; display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--hint);" title="Removes empty/redundant wrapper divs to flatten the Figma layer tree">
+        <input type="checkbox" id="reduceLayersCheck" style="margin: 0; cursor: pointer;">
+        Reduce Layers (Experimental)
+      </label>
+    </div>
     <div style="display: flex; gap: 8px;">
       <button class="build-btn" id="buildBtn" style="flex: 2;">Build in Figma</button>
       <button class="build-btn" id="uploadBtn" style="flex: 1; background: var(--bg); color: var(--text); border-color: var(--border);">Upload .json</button>
@@ -451,7 +457,8 @@
       const name = isFileQueue ? pendingFiles[currentFileIndex].name : "JSON";
       setStatus(`Building ${name}…`, "loading");
       if (!isFileQueue) buildBtn.disabled = true;
-      parent.postMessage({ pluginMessage: { type: "build", payload: parsed } }, "*");
+      const reduceLayers = document.getElementById("reduceLayersCheck").checked;
+      parent.postMessage({ pluginMessage: { type: "build", payload: parsed, reduceLayers } }, "*");
     }
 
     function checkAndBuild(parsed, isFileQueue) {

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3] - Layer Reduction & Store Compliance
+
+### Added
+- **Reduce Layers (Experimental):** Added a powerful new toggle to both the Chrome extension and Figma plugin. When enabled, the engine intelligently identifies and collapses empty, styleless "wrapper divs" (often used merely to pass down Flexbox properties) into their children, drastically flattening the resulting Figma layer tree.
+- **Large Desktop Emulation:** Added a 1920px (Large Desktop) preset to the viewport emulator.
+- **Viewport Filenames:** The downloaded JSON payload filename now automatically includes your currently selected viewport width (e.g., `figcopy-github-com-fullpage-1920px.json`).
+
+### Fixes
+- **Store Policy Compliance:** Removed static `<all_urls>` host permissions from the extension manifest, replacing it with dynamic script injection via the `activeTab` permission to pass Chrome Web Store automated reviews.
+- **Auto Layout Corruption via `<br>`:** Globally stripped `<br>` line-break tags from the DOM capture. Previously, these were being parsed as invisible 0x0 blocks that would blow out Auto Layout gap spacing.
+
 ## [1.0.2] - Advanced Auto Layout & Native Forms
 
 ### Added

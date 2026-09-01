@@ -17,7 +17,7 @@
     "boxShadow", "mask", "webkitMask", "maskImage", "webkitMaskImage"
   ];
 
-  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE", "OPTION", "OPTGROUP", "DATALIST"]);
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE", "OPTION", "OPTGROUP", "DATALIST", "BR"]);
   const MAX_NODES = 1500;
   let nodeCount = 0;
 
@@ -45,6 +45,20 @@
       return canvas.toDataURL("image/webp", 0.8);
     } catch (e) {
       return null; // tainted canvas (cross-origin) — fall back to src URL
+    }
+  }
+
+  // Inlines computed fill/stroke onto an SVG clone so Figma sees explicit colours.
+  function inlineSvgStyles(originalNode, cloneNode) {
+    if (originalNode.nodeType === 1) {
+      const comp = window.getComputedStyle(originalNode);
+      if (comp.fill && comp.fill !== "none") cloneNode.setAttribute("fill", comp.fill);
+      if (comp.stroke && comp.stroke !== "none") cloneNode.setAttribute("stroke", comp.stroke);
+      if (comp.strokeWidth && comp.strokeWidth !== "0px") cloneNode.setAttribute("stroke-width", comp.strokeWidth);
+      if (comp.color) cloneNode.setAttribute("color", comp.color);
+    }
+    for (let i = 0; i < originalNode.childNodes.length; i++) {
+      if (cloneNode.childNodes[i]) inlineSvgStyles(originalNode.childNodes[i], cloneNode.childNodes[i]);
     }
   }
 
@@ -94,9 +108,7 @@
             styles: node.styles
           });
        }
-    }
-    
-    if (content.startsWith("url(")) {
+    } else if (content.startsWith("url(")) {
        node.tag = "img";
        const match = content.match(/url\(([^)]+)\)/);
        if (match) {
@@ -128,6 +140,16 @@
 
     const rect = rectOf(el);
     if (rect.width === 0 && rect.height === 0 && el.childNodes.length === 0) return null;
+
+    // Skip invisible interaction overlays: absolutely/fixed positioned, no children,
+    // and no visual styling — these are pure click-capture divs used by JS frameworks.
+    if ((computed.position === "absolute" || computed.position === "fixed") && el.childNodes.length === 0) {
+      const bg = computed.backgroundColor;
+      const hasBg = bg && bg !== "rgba(0, 0, 0, 0)";
+      const hasBorder = parseFloat(computed.borderTopWidth) > 0 || parseFloat(computed.borderLeftWidth) > 0;
+      const hasShadow = computed.boxShadow && computed.boxShadow !== "none";
+      if (!hasBg && !hasBorder && !hasShadow) return null;
+    }
 
     nodeCount++;
 
@@ -193,8 +215,8 @@
       }
       try {
         const canvas = document.createElement("canvas");
-        canvas.width = el.videoWidth || el.width || el.getBoundingClientRect().width || 1;
-        canvas.height = el.videoHeight || el.height || el.getBoundingClientRect().height || 1;
+        canvas.width = el.videoWidth || el.width || rect.width || 1;
+        canvas.height = el.videoHeight || el.height || rect.height || 1;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(el, 0, 0, canvas.width, canvas.height);
         node.image = canvas.toDataURL("image/webp", 0.8);
@@ -206,20 +228,6 @@
 
     if (el.tagName === "SVG" || el.tagName === "svg") {
       const clone = el.cloneNode(true);
-      function inlineSvgStyles(originalNode, cloneNode) {
-        if (originalNode.nodeType === 1) { // ELEMENT
-          const comp = window.getComputedStyle(originalNode);
-          if (comp.fill && comp.fill !== "none") cloneNode.setAttribute("fill", comp.fill);
-          if (comp.stroke && comp.stroke !== "none") cloneNode.setAttribute("stroke", comp.stroke);
-          if (comp.strokeWidth && comp.strokeWidth !== "0px") cloneNode.setAttribute("stroke-width", comp.strokeWidth);
-          if (comp.color) cloneNode.setAttribute("color", comp.color);
-        }
-        for (let i = 0; i < originalNode.childNodes.length; i++) {
-          if (cloneNode.childNodes[i]) {
-            inlineSvgStyles(originalNode.childNodes[i], cloneNode.childNodes[i]);
-          }
-        }
-      }
       inlineSvgStyles(el, clone);
       node.svg = clone.outerHTML;
       return node;
@@ -285,7 +293,17 @@
               width: Math.round(textRect.width),
               height: Math.round(textRect.height)
             },
-            styles: collectStyles(computed)
+            styles: {
+              color: computed.color,
+              fontSize: computed.fontSize,
+              fontWeight: computed.fontWeight,
+              fontFamily: computed.fontFamily,
+              lineHeight: computed.lineHeight,
+              letterSpacing: computed.letterSpacing,
+              textAlign: computed.textAlign,
+              textTransform: computed.textTransform,
+              textDecoration: computed.textDecoration
+            }
           });
         }
       }
@@ -316,11 +334,18 @@
         const pr = parseFloat(computed.paddingRight) || 0;
         const pb = parseFloat(computed.paddingBottom) || 0;
         
-        const textStyles = collectStyles(computed);
-        textStyles.display = "inline";
-        if (isPlaceholder) {
-          textStyles.opacity = "0.5";
-        }
+        const textStyles = {
+          color: computed.color,
+          fontSize: computed.fontSize,
+          fontWeight: computed.fontWeight,
+          fontFamily: computed.fontFamily,
+          lineHeight: computed.lineHeight,
+          letterSpacing: computed.letterSpacing,
+          textAlign: computed.textAlign,
+          textTransform: computed.textTransform,
+          textDecoration: computed.textDecoration,
+          opacity: isPlaceholder ? "0.5" : computed.opacity
+        };
         
         node.children.push({
           tag: "text_leaf",
@@ -359,11 +384,92 @@
     return node;
   }
 
+  function collapseTree(node) {
+    if (!node || !node.children || node.children.length === 0) return node;
+
+    // Bottom-up traversal
+    for (let i = 0; i < node.children.length; i++) {
+      node.children[i] = collapseTree(node.children[i]);
+    }
+
+    if (
+      node.children.length === 1 &&
+      node.children[0].tag && 
+      node.children[0].tag !== "mask_svg_icon"
+    ) {
+      const child = node.children[0];
+      const styles = node.styles || {};
+      
+      const bg = styles.backgroundColor;
+      const hasBg = bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent";
+      const hasBgImg = styles.backgroundImage && styles.backgroundImage !== "none";
+      const hasShadow = styles.boxShadow && styles.boxShadow !== "none";
+      
+      const t = parseFloat(styles.borderTopWidth) || 0;
+      const r = parseFloat(styles.borderRightWidth) || 0;
+      const b = parseFloat(styles.borderBottomWidth) || 0;
+      const l = parseFloat(styles.borderLeftWidth) || 0;
+      const hasBorder = (t > 0 || r > 0 || b > 0 || l > 0) && styles.borderStyle !== "none";
+      
+      const opacity = parseFloat(styles.opacity);
+      const hasOpacity = !isNaN(opacity) && opacity < 1;
+      
+      const overflow = styles.overflow || "";
+      const isClipped = overflow === "hidden" || overflow === "clip";
+      
+      const sameWidth = Math.abs(node.rect.width - child.rect.width) < 1;
+      const sameHeight = Math.abs(node.rect.height - child.rect.height) < 1;
+      
+      // Don't collapse if the parent has meaningful padding (it contributes to layout)
+      const pt = parseFloat(styles.paddingTop) || 0;
+      const pb = parseFloat(styles.paddingBottom) || 0;
+      const pl = parseFloat(styles.paddingLeft) || 0;
+      const pr = parseFloat(styles.paddingRight) || 0;
+      const hasPadding = pt > 0 || pb > 0 || pl > 0 || pr > 0;
+      
+      if (!hasBg && !hasBgImg && !hasShadow && !hasBorder && !hasOpacity && !isClipped && !hasPadding && sameWidth && sameHeight) {
+        if (!child.styles) child.styles = {};
+        
+        if (styles.position === "absolute" || styles.position === "fixed") {
+          child.styles.position = styles.position;
+        }
+        
+        const mt = parseFloat(styles.marginTop) || 0;
+        const mb = parseFloat(styles.marginBottom) || 0;
+        const ml = parseFloat(styles.marginLeft) || 0;
+        const mr = parseFloat(styles.marginRight) || 0;
+        
+        if (mt || mb || ml || mr) {
+          child.styles.marginTop = ((parseFloat(child.styles.marginTop) || 0) + mt) + "px";
+          child.styles.marginBottom = ((parseFloat(child.styles.marginBottom) || 0) + mb) + "px";
+          child.styles.marginLeft = ((parseFloat(child.styles.marginLeft) || 0) + ml) + "px";
+          child.styles.marginRight = ((parseFloat(child.styles.marginRight) || 0) + mr) + "px";
+        }
+        
+        const flexGrow = parseFloat(styles.flexGrow) || 0;
+        if (flexGrow > 0) {
+          child.styles.flexGrow = Math.max(parseFloat(child.styles.flexGrow) || 0, flexGrow).toString();
+        }
+
+        if (node.tag !== "div" && node.tag !== "span") {
+          child.tag = node.tag;
+        }
+        return child;
+      }
+    }
+    return node;
+  }
+
   function captureElement(el) {
     nodeCount = 0;
     didShowTruncateToast = false;
     const originRect = el.getBoundingClientRect();
-    const tree = serialize(el, originRect, 0);
+    let tree = serialize(el, originRect, 0);
+    
+    if (reduceLayersGlobal) {
+      tree = collapseTree(tree);
+    }
+    
     return {
       version: 1,
       capturedAt: new Date().toISOString(),
@@ -378,6 +484,8 @@
   let didEmulateGlobal = false;
   let downloadInsteadGlobal = false;
   let skipFormValuesGlobal = false;
+  let reduceLayersGlobal = false;
+  let viewportWidthGlobal = "";
   let onPicked = null;
 
   function ensureHoverBox() {
@@ -452,32 +560,40 @@
     stopPicking();
     const data = captureElement(target);
     const json = JSON.stringify(data);
-    // Write to clipboard or download JSON file, inside the same user-gesture (click), 
-    // since the extension popup will already have closed by this point.
     if (downloadInsteadGlobal) {
-      try {
-        const blob = new Blob([json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        const host = window.location.hostname.replace(/[^a-z0-9]/gi, '-');
-        const tagRaw = target.id ? target.id : target.tagName.toLowerCase();
-        const tag = tagRaw.replace(/[^a-z0-9]/gi, '-');
-        const d = new Date();
-        const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
-        a.download = `figcopy-${host}-${tag}-${time}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      let host = "page";
+      try { host = new URL(location.href).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
+      const d = new Date();
+      const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
+      const tag = target.tagName.toLowerCase();
+      const vpSuffix = viewportWidthGlobal ? `-${viewportWidthGlobal}px` : "";
+      a.download = `figcopy-${host}-${tag}${vpSuffix}-${time}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setTimeout(() => {
         showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);
-      } catch (e) {
-        showToast("Couldn't download automatically — check console for the JSON", "err");
-      }
+      }, 50);
     } else {
-      navigator.clipboard.writeText(json).then(
-        () => showToast(`Copied "${target.tagName.toLowerCase()}" layout — paste into the Figma plugin`),
-        () => showToast("Couldn't copy automatically — check console for the JSON", "err")
-      );
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(json).then(() => {
+          showToast(`Copied "${target.tagName.toLowerCase()}" layout to clipboard!`);
+        }).catch(() => {
+          showToast("Clipboard write failed. Check console.", "err");
+        });
+      } else {
+        showToast("Clipboard API unavailable. Check console.", "err");
+      }
     }
+    
+    didEmulateGlobal = false;
+    downloadInsteadGlobal = false;
+    reduceLayersGlobal = false;
+    viewportWidthGlobal = "";
+    document.body.style.cursor = "";
     if (onPicked) onPicked(data);
   }
 
@@ -553,6 +669,8 @@
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "CAPTURE_FULL_PAGE") {
       skipFormValuesGlobal = msg.skipFormValues || false;
+      reduceLayersGlobal = msg.reduceLayers || false;
+      viewportWidthGlobal = msg.viewportWidth || "";
       (async () => {
         showToast("Scrolling to trigger animations…");
         
@@ -599,6 +717,8 @@
       didEmulateGlobal = msg.didEmulate || false;
       downloadInsteadGlobal = msg.downloadInstead || false;
       skipFormValuesGlobal = msg.skipFormValues || false;
+      reduceLayersGlobal = msg.reduceLayers || false;
+      viewportWidthGlobal = msg.viewportWidth || "";
       startPicking(() => {
         // Clipboard write already happened inside onClick, above.
       });

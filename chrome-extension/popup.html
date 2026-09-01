@@ -294,6 +294,7 @@
         <label>Viewport Width</label>
         <select id="viewportSelect">
           <option value="current">Current Window Size</option>
+          <option value="1920">Large Desktop (1920px)</option>
           <option value="1440">Desktop (1440px)</option>
           <option value="1024">Laptop (1024px)</option>
           <option value="768">Tablet (768px)</option>
@@ -350,6 +351,13 @@
           <span>Skip form input values</span>
           <div class="toggle-switch">
             <input type="checkbox" id="skipFormValuesCheck" />
+            <span class="slider"></span>
+          </div>
+        </label>
+        <label class="toggle-wrap" title="Removes empty/redundant wrapper divs to flatten the Figma layer tree">
+          <span>Reduce Layers (Experimental)</span>
+          <div class="toggle-switch">
+            <input type="checkbox" id="reduceLayersCheck" />
             <span class="slider"></span>
           </div>
         </label>

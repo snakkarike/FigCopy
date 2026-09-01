@@ -54,6 +54,13 @@ async function applyViewportResize(tab) {
   });
 }
 
+function getViewportWidth() {
+  const widthStr = document.getElementById("viewportSelect").value;
+  if (widthStr === "custom") return document.getElementById("customWidthInput").value || "";
+  if (widthStr === "current") return "";
+  return widthStr;
+}
+
 document.getElementById("viewportSelect").addEventListener("change", (e) => {
   const customWrap = document.getElementById("customWidthWrap");
   if (e.target.value === "custom") {
@@ -100,15 +107,21 @@ checkEmulationState();
 
 const downloadCheck = document.getElementById("downloadCheck");
 const skipFormValuesCheck = document.getElementById("skipFormValuesCheck");
-chrome.storage.local.get(["downloadInstead", "skipFormValues"], (data) => {
+const reduceLayersCheck = document.getElementById("reduceLayersCheck");
+
+chrome.storage.local.get(["downloadInstead", "skipFormValues", "reduceLayers"], (data) => {
   downloadCheck.checked = !!data.downloadInstead;
   skipFormValuesCheck.checked = !!data.skipFormValues;
+  reduceLayersCheck.checked = !!data.reduceLayers;
 });
 downloadCheck.addEventListener("change", () => {
   chrome.storage.local.set({ downloadInstead: downloadCheck.checked });
 });
 skipFormValuesCheck.addEventListener("change", () => {
   chrome.storage.local.set({ skipFormValues: skipFormValuesCheck.checked });
+});
+reduceLayersCheck.addEventListener("change", () => {
+  chrome.storage.local.set({ reduceLayers: reduceLayersCheck.checked });
 });
 
 document.getElementById("emulateBtn").addEventListener("click", async () => {
@@ -145,9 +158,11 @@ document.getElementById("pickBtn").addEventListener("click", async () => {
   const didEmulate = await applyViewportResize(tab);
   const downloadInstead = downloadCheck.checked;
   const skipFormValues = skipFormValuesCheck.checked;
+  const reduceLayers = reduceLayersCheck.checked;
 
   setStatus("Click any element… (Esc to cancel)");
-  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead, skipFormValues }, () => {
+  const viewportWidth = getViewportWidth();
+  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead, skipFormValues, viewportWidth, reduceLayers }, () => {
     if (chrome.runtime.lastError) {}
     window.close();
   });
@@ -165,8 +180,9 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
   setStatus("Capturing…", "loading");
   const downloadInstead = downloadCheck.checked;
   const skipFormValues = skipFormValuesCheck.checked;
+  const reduceLayers = reduceLayersCheck.checked;
   
-  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues }, async (response) => {
+  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues, reduceLayers, viewportWidth: getViewportWidth() }, async (response) => {
     if (didEmulate) {
       chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
     }
@@ -177,6 +193,7 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
     }
     try {
       const json = JSON.stringify(response.data);
+      const vpSuffix = viewportWidth ? `-${viewportWidth}px` : "";
       if (downloadInstead) {
         const blob = new Blob([json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -186,7 +203,7 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
         try { host = new URL(tab.url).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
         const d = new Date();
         const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
-        a.download = `figcopy-${host}-fullpage-${time}.json`;
+        a.download = `figcopy-${host}-fullpage${vpSuffix}-${time}.json`;
         a.click();
         URL.revokeObjectURL(url);
         setStatus(`Downloaded! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
