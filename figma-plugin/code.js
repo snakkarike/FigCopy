@@ -586,8 +586,8 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
   frame.y = domNode.rect.y - originRect.y;
   frame.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
   
-  const isClipped = style.overflow === "hidden" || style.overflow === "scroll" || style.overflow === "auto" || style.overflowX === "hidden" || style.overflowY === "hidden" || style.overflow === "clip";
-  frame.clipsContent = !!isClipped;
+  const isClipped = style.overflow === "hidden" || style.overflowX === "hidden" || style.overflowY === "hidden" || style.overflow === "clip";
+  frame.clipsContent = depth === 0 ? false : !!isClipped;
 
   applyCommonStyle(frame, style);
   
@@ -597,6 +597,23 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
   if (style.display === "flex" || style.display === "inline-flex") {
     wantsAutoLayout = true;
     frame.layoutMode = style.flexDirection && style.flexDirection.includes("column") ? "VERTICAL" : "HORIZONTAL";
+  } else if (style.display === "block" || style.display === "inline-block" || style.display === "list-item" || style.display === "inline" || style.display === "table-cell") {
+    wantsAutoLayout = true;
+    let hasBlockChild = false;
+    if (domNode.children) {
+      for (const child of domNode.children) {
+        if (child.tag !== "text_leaf" && child.styles && (child.styles.display === "block" || child.styles.display === "flex" || child.styles.display === "grid" || child.styles.display === "list-item" || child.styles.display === "table" || child.styles.display === "table-row")) {
+          hasBlockChild = true;
+          break;
+        }
+      }
+    }
+    if (hasBlockChild) {
+      frame.layoutMode = "VERTICAL";
+    } else {
+      frame.layoutMode = "HORIZONTAL";
+      frame.layoutWrap = "WRAP";
+    }
   }
 
   if (wantsAutoLayout) {
@@ -611,6 +628,16 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
     frame.primaryAxisAlignItems = alignPrimary(style.justifyContent);
     frame.counterAxisAlignItems = alignCounter(style.alignItems);
     
+    if (style.display !== "flex" && style.display !== "inline-flex") {
+      if (style.textAlign === "center") {
+        if (frame.layoutMode === "VERTICAL") frame.counterAxisAlignItems = "CENTER";
+        else frame.primaryAxisAlignItems = "CENTER";
+      } else if (style.textAlign === "right" || style.textAlign === "end") {
+        if (frame.layoutMode === "VERTICAL") frame.counterAxisAlignItems = "MAX";
+        else frame.primaryAxisAlignItems = "MAX";
+      }
+    }
+    
     if (style.flexWrap === "wrap") {
       frame.layoutWrap = "WRAP";
     }
@@ -622,10 +649,17 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
   }
 
   for (const child of children) {
+    if (child.tag === "option" || child.tag === "optgroup" || child.tag === "datalist") continue;
     const childNode = await buildNode(child, domNode.rect, bump, depth + 1);
     
     const origX = childNode.x;
     const origY = childNode.y;
+    
+    const childCenterX = child.rect.x + (child.rect.width / 2);
+    const parentCenterX = domNode.rect.x + (domNode.rect.width / 2);
+    const isCenteredX = Math.abs(childCenterX - parentCenterX) < 50;
+    const isFullBleed = origX <= -5 && child.rect.width >= domNode.rect.width;
+    const shouldCenter = isCenteredX || isFullBleed;
     
     frame.appendChild(childNode);
     
@@ -635,15 +669,45 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
           childNode.layoutPositioning = "ABSOLUTE";
           childNode.x = origX;
           childNode.y = origY;
+          if (shouldCenter) {
+            childNode.constraints = { horizontal: "CENTER", vertical: childNode.constraints.vertical || "TOP" };
+          }
         } catch(e) {}
       } else {
         const flexGrow = parseFloat(child.styles.flexGrow);
-        if (!isNaN(flexGrow) && flexGrow > 0) {
-          try { childNode.layoutGrow = 1; } catch(e) {}
+        
+        let currentNode = childNode;
+        
+        if (shouldCenter && origX < -5) {
+          try {
+            const wrapper = figma.createFrame();
+            wrapper.name = childNode.name + "-center-wrap";
+            wrapper.fills = [];
+            try { wrapper.layoutMode = frame.layoutMode; } catch(e) {}
+            try { wrapper.primaryAxisSizingMode = "AUTO"; } catch(e) {}
+            try { wrapper.counterAxisSizingMode = "AUTO"; } catch(e) {}
+            try { wrapper.primaryAxisAlignItems = "CENTER"; } catch(e) {}
+            try { wrapper.counterAxisAlignItems = "CENTER"; } catch(e) {}
+            try { wrapper.clipsContent = false; } catch(e) {}
+            
+            const idx = frame.children.indexOf(currentNode);
+            try {
+              if (idx !== -1) frame.insertChild(idx, wrapper);
+              else frame.appendChild(wrapper);
+            } catch(e) {}
+            
+            try { wrapper.appendChild(currentNode); } catch(e) {}
+            
+            try { wrapper.layoutAlign = "STRETCH"; } catch(e) {}
+            
+            currentNode = wrapper;
+          } catch(e) {}
         }
-        // Apply CSS margins as Figma per-item margins on auto-layout children.
-        // getBoundingClientRect already includes margin for absolute coords,
-        // but inside auto-layout Figma controls spacing — so we map them explicitly.
+        
+        if (!isNaN(flexGrow) && flexGrow > 0) {
+          try { currentNode.layoutGrow = 1; } catch(e) {}
+        }
+        
         const mt = px(child.styles.marginTop);
         const mb = px(child.styles.marginBottom);
         const ml = px(child.styles.marginLeft);
@@ -651,23 +715,53 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
         if (mt || mb || ml || mr) {
           try {
             const wrapper = figma.createFrame();
-            wrapper.name = childNode.name + "-margin";
+            wrapper.name = currentNode.name + "-margin";
             wrapper.fills = [];
-            wrapper.layoutMode = "VERTICAL";
-            wrapper.primaryAxisSizingMode = "HUG";
-            wrapper.counterAxisSizingMode = "HUG";
-            if (mt) wrapper.paddingTop = mt;
-            if (mb) wrapper.paddingBottom = mb;
-            if (ml) wrapper.paddingLeft = ml;
-            if (mr) wrapper.paddingRight = mr;
+            try { wrapper.layoutMode = "VERTICAL"; } catch(e) {}
+            try { wrapper.primaryAxisSizingMode = "AUTO"; } catch(e) {}
+            try { wrapper.counterAxisSizingMode = "AUTO"; } catch(e) {}
+            if (mt) try { wrapper.paddingTop = Math.max(0, mt); } catch(e) {}
+            if (mb) try { wrapper.paddingBottom = Math.max(0, mb); } catch(e) {}
+            if (ml) try { wrapper.paddingLeft = Math.max(0, ml); } catch(e) {}
+            if (mr) try { wrapper.paddingRight = Math.max(0, mr); } catch(e) {}
+            
+            const idx = frame.children.indexOf(currentNode);
+            try {
+              if (idx !== -1) frame.insertChild(idx, wrapper);
+              else frame.appendChild(wrapper);
+            } catch(e) {}
+            
+            // If the child has layoutGrow = 1 or layoutAlign = "STRETCH", appending it to a HUG wrapper will crash or behave incorrectly.
+            let hadGrow = false;
+            let hadStretch = false;
+            try { 
+              if (currentNode.layoutGrow === 1) {
+                hadGrow = true;
+                currentNode.layoutGrow = 0;
+              }
+              if (currentNode.layoutAlign === "STRETCH") {
+                hadStretch = true;
+                currentNode.layoutAlign = "INHERIT";
+              }
+            } catch(e) {}
+            
+            try { wrapper.appendChild(currentNode); } catch(e) {}
+            
+            if (hadStretch) {
+              try { wrapper.layoutAlign = "STRETCH"; } catch(e) {}
+              try { currentNode.layoutAlign = "STRETCH"; } catch(e) {}
+            }
+            
+            if (hadGrow) {
+              try { wrapper.layoutGrow = 1; } catch(e) {}
+              try { currentNode.layoutAlign = "STRETCH"; } catch(e) {}
+            }
             
             if (!isNaN(flexGrow) && flexGrow > 0) {
               try { wrapper.layoutGrow = 1; } catch(e) {}
             }
             
-            const idx = frame.children.indexOf(childNode);
-            frame.insertChild(idx, wrapper);
-            wrapper.appendChild(childNode);
+            currentNode = wrapper;
           } catch(e) {}
         }
       }

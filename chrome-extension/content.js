@@ -17,7 +17,7 @@
     "boxShadow", "mask", "webkitMask", "maskImage", "webkitMaskImage"
   ];
 
-  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE"]);
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE", "OPTION", "OPTGROUP", "DATALIST"]);
   const MAX_NODES = 1500;
   let nodeCount = 0;
 
