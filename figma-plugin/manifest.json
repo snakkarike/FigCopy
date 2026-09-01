@@ -1,8 +1,9 @@
 {
   "name": "FigCopy",
-  "id": "figcopy-local-dev",
+  "id": "1676506414018355372",
   "api": "1.0.0",
   "main": "code.js",
+  "documentAccess": "dynamic-page",
   "ui": "ui.html",
   "editorType": ["figma"],
   "networkAccess": {

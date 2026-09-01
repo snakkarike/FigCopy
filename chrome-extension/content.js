@@ -142,6 +142,45 @@
       styles: collectStyles(computed),
       children: []
     };
+    
+    if (el.tagName === "INPUT" && (el.type === "checkbox" || el.type === "radio")) {
+      const appearance = computed.appearance || computed.getPropertyValue("-webkit-appearance");
+      if (appearance !== "none") {
+        node.styles.borderStyle = "solid";
+        node.styles.borderTopWidth = "1px";
+        node.styles.borderRightWidth = "1px";
+        node.styles.borderBottomWidth = "1px";
+        node.styles.borderLeftWidth = "1px";
+        if (el.type === "checkbox") {
+          node.styles.borderTopLeftRadius = "3px";
+          node.styles.borderTopRightRadius = "3px";
+          node.styles.borderBottomLeftRadius = "3px";
+          node.styles.borderBottomRightRadius = "3px";
+          if (el.checked) {
+            node.styles.backgroundColor = el.disabled ? "rgb(175, 175, 175)" : "rgb(10, 88, 202)";
+            node.styles.borderColor = el.disabled ? "rgb(175, 175, 175)" : "rgb(10, 88, 202)";
+            node.styles.backgroundImage = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 8.5l2.5 2.5 5.5-5.5'/%3E%3C/svg%3E")`;
+          } else {
+            node.styles.backgroundColor = el.disabled ? "rgb(235, 235, 235)" : "rgb(255, 255, 255)";
+            node.styles.borderColor = el.disabled ? "rgb(200, 200, 200)" : "rgb(118, 118, 118)";
+          }
+        } else {
+          node.styles.borderTopLeftRadius = "50%";
+          node.styles.borderTopRightRadius = "50%";
+          node.styles.borderBottomLeftRadius = "50%";
+          node.styles.borderBottomRightRadius = "50%";
+          if (el.checked) {
+            node.styles.backgroundColor = "rgb(255, 255, 255)";
+            node.styles.borderColor = el.disabled ? "rgb(175, 175, 175)" : "rgb(10, 88, 202)";
+            const dotColor = el.disabled ? "%23afafaf" : "%230a58ca";
+            node.styles.backgroundImage = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='4' fill='${dotColor}'/%3E%3C/svg%3E")`;
+          } else {
+            node.styles.backgroundColor = el.disabled ? "rgb(235, 235, 235)" : "rgb(255, 255, 255)";
+            node.styles.borderColor = el.disabled ? "rgb(200, 200, 200)" : "rgb(118, 118, 118)";
+          }
+        }
+      }
+    }
 
     if (el.tagName === "IMG") {
       node.image = imageToDataURL(el) || el.src || null;

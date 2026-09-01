@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.2] - Advanced Auto Layout & Native Forms
+
+### Added
+- **Expanded Auto-Layout Coverage:** Structural elements like badges, text blocks, and table cells (`display: block`, `inline-block`, `list-item`, `table-cell`) are now automatically converted into fully-editable Figma Auto Layout frames instead of absolute "dumb" boxes.
+- **Text-Align Mapping:** CSS `text-align` properties (`center`, `right`, `end`) are now intelligently mapped directly to Figma's `primaryAxisAlignItems` and `counterAxisAlignItems` for these new structural containers.
+- **SVG Background Image Support:** The plugin can now render inline SVG data URLs used in CSS `background-image` properties (heavily used in custom checkboxes). It decodes the SVG, creates native Figma vector nodes, and pins them to the back of the element's layout stack using absolute positioning.
+- **Native Checkbox & Radio Synthesis:** The Chrome extension now detects native OS-rendered checkboxes and radio buttons. Because native controls hide their CSS, the extension synthesizes their blue checked backgrounds, borders, disabled states, and vector checkmark/dot SVGs on the fly so they render perfectly in Figma.
+
+### Fixes
+- **Select Dropdown Bounds:** Ignored `<option>`, `<optgroup>`, and `<datalist>` tags in both the extension and plugin to prevent invisible browser DOM cruft from blowing out the dimensions of `<select>` dropdowns in Auto Layout.
+- **Margin Wrapper Sizing Bug:** Fixed a critical issue where margin and centering wrappers were defaulting to fixed 100x100 pixel dimensions because the Figma API requires the string `"AUTO"` for "Hug contents" rather than `"HUG"`.
+- **Root Frame Clipping:** Disabled `clipsContent` on the absolute root frame to prevent rigid wide layouts from being artificially chopped off if the capturing browser window was narrowed by scrollbars.
+- **Graceful Text Overflow:** Refined the `clipsContent` mapping so containers using `overflow: auto` or `overflow: scroll` (like sidebars) no longer aggressively clip text characters in Figma, allowing slightly-wider text rendering to overflow gracefully for manual resizing.
+
 ## [1.0.1] - UI & Icon Polish
 
 ### Fixes

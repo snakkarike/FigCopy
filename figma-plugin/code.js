@@ -273,7 +273,8 @@ function extractSvgDataUrl(cssStr) {
     const endRaw = cssStr.indexOf("</svg>", start);
     if (endRaw !== -1) return cssStr.substring(start, endRaw + 6);
     
-    const endEncoded = cssStr.indexOf("%3C/svg%3E", start);
+    const upper = cssStr.toUpperCase();
+    const endEncoded = upper.indexOf("%3C/SVG%3E", start);
     if (endEncoded !== -1) return cssStr.substring(start, endEncoded + 10);
   }
   
@@ -646,6 +647,34 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
     frame.counterAxisSizingMode = "FIXED";
   } else {
     frame.layoutMode = "NONE";
+  }
+  
+  if (style.backgroundImage && style.backgroundImage !== "none") {
+    const bgSvgUrl = extractSvgDataUrl(style.backgroundImage);
+    if (bgSvgUrl) {
+      const bgSvgStr = getSvgStringFromDataUrl(bgSvgUrl);
+      if (bgSvgStr) {
+        try {
+          const bgSvgNode = figma.createNodeFromSvg(processSvgString(bgSvgStr));
+          bgSvgNode.name = "background-image";
+          bgSvgNode.resize(Math.max(domNode.rect.width, 1), Math.max(domNode.rect.height, 1));
+          
+          frame.appendChild(bgSvgNode);
+          if (wantsAutoLayout) {
+            bgSvgNode.layoutPositioning = "ABSOLUTE";
+            bgSvgNode.x = 0;
+            bgSvgNode.y = 0;
+            bgSvgNode.constraints = { horizontal: "STRETCH", vertical: "STRETCH" };
+          } else {
+            bgSvgNode.x = 0;
+            bgSvgNode.y = 0;
+          }
+          frame.insertChild(0, bgSvgNode);
+        } catch (e) {
+          // silently ignore invalid svg
+        }
+      }
+    }
   }
 
   for (const child of children) {
