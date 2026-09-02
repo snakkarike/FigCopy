@@ -14,7 +14,9 @@
     "overflow", "overflowX", "overflowY",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "marginTop", "marginRight", "marginBottom", "marginLeft",
-    "boxShadow", "mask", "webkitMask", "maskImage", "webkitMaskImage"
+    "boxShadow", "mask", "webkitMask", "maskImage", "webkitMaskImage",
+    "objectFit", "objectPosition",
+    "top", "right", "bottom", "left"
   ];
 
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "LINK", "META", "TEMPLATE", "OPTION", "OPTGROUP", "DATALIST", "BR"]);
@@ -42,7 +44,10 @@
       canvas.height = imgEl.naturalHeight || imgEl.height || 1;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL("image/webp", 0.8);
+      if (!quickPasteGlobal) return canvas.toDataURL("image/webp", 0.8);
+      
+      // For SVG Quick Paste, always use PNG as Figma doesn't natively support WebP via clipboard
+      return canvas.toDataURL("image/png");
     } catch (e) {
       return null; // tainted canvas (cross-origin) — fall back to src URL
     }
@@ -219,7 +224,11 @@
         canvas.height = el.videoHeight || el.height || rect.height || 1;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(el, 0, 0, canvas.width, canvas.height);
-        node.image = canvas.toDataURL("image/webp", 0.8);
+        if (!quickPasteGlobal) {
+          node.image = canvas.toDataURL("image/webp", 0.8);
+        } else {
+          node.image = canvas.toDataURL("image/png");
+        }
       } catch (e) {
         node.image = el.poster || null; // fallback for cross-origin videos
       }
@@ -460,6 +469,225 @@
     return node;
   }
 
+  // ---------- Quick Paste: convert a captured tree straight to SVG ----------
+  // Lets a user paste directly onto the Figma canvas (Cmd/Ctrl+V) with no
+  // companion plugin. Coordinates in the tree are already absolute relative
+  // to the captured root (see `serialize`'s use of `originRect`), so no
+  // per-level transform accumulation is needed here — every primitive is
+  // emitted at its own rect directly.
+  function escapeXml(str) {
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  function num(v, fallback = 0) {
+    const n = parseFloat(v);
+    return isNaN(n) ? fallback : n;
+  }
+
+  let svgDefsCounter = 0;
+  const colorCache = new Map();
+  let colorCtx = null;
+
+  function formatColor(cssColor) {
+    if (!cssColor || cssColor === "transparent" || cssColor === "none") return { c: "none", a: 1 };
+    if (colorCache.has(cssColor)) return colorCache.get(cssColor);
+    if (cssColor.startsWith("#") && (cssColor.length === 7 || cssColor.length === 4)) {
+       const res = { c: cssColor, a: 1 };
+       colorCache.set(cssColor, res);
+       return res;
+    }
+    if (cssColor.startsWith("rgb(") && !cssColor.includes("var(")) {
+       const res = { c: cssColor, a: 1 };
+       colorCache.set(cssColor, res);
+       return res;
+    }
+    if (!colorCtx) {
+       colorCtx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+       colorCtx.canvas.width = 1;
+       colorCtx.canvas.height = 1;
+    }
+    colorCtx.clearRect(0, 0, 1, 1);
+    colorCtx.fillStyle = "rgba(0,0,0,0)";
+    colorCtx.fillStyle = cssColor;
+    colorCtx.fillRect(0, 0, 1, 1);
+    const data = colorCtx.getImageData(0, 0, 1, 1).data;
+    let res;
+    if (data[3] === 0) res = { c: "none", a: 1 };
+    else res = { c: `rgb(${data[0]},${data[1]},${data[2]})`, a: data[3] / 255 };
+    colorCache.set(cssColor, res);
+    return res;
+  }
+
+  function fixSvgColors(svgStr, nodeColor) {
+    if (!svgStr) return "";
+    return svgStr.replace(/(fill|stroke|color)=["']([^"']+)["']/ig, (match, attr, color) => {
+      if (color.toLowerCase() === "currentcolor" && nodeColor) {
+         color = nodeColor;
+      }
+      const { c, a } = formatColor(color);
+      if (c === "none") return `${attr}="none"`;
+      return `${attr}="${c}"` + (a < 1 ? ` ${attr}-opacity="${a}"` : "");
+    });
+  }
+
+  function nodeToSvgFragment(node, defsList) {
+    if (!node) return "";
+    const styles = node.styles || {};
+    const rect = node.rect || { x: 0, y: 0, width: 0, height: 0 };
+    const nodeOpacity = styles.opacity !== undefined ? parseFloat(styles.opacity) : 1;
+
+    if (node.tag === "text_leaf") {
+      if (!node.text) return "";
+      const fontSize = num(styles.fontSize, 14);
+      const weight = styles.fontWeight || "400";
+      const family = (styles.fontFamily || "sans-serif").split(",")[0].replace(/["']/g, "").trim();
+      const { c: textColor, a: textAlpha } = formatColor(styles.color || "#000000");
+      const finalOpacity = nodeOpacity * textAlpha;
+      
+      const rawLines = node.text.split(/\r?\n/);
+      let lines = [];
+      const isMultiline = rect.height > fontSize * 1.5;
+      
+      if (isMultiline && rect.width > 0) {
+        if (!window._measureCtx) window._measureCtx = document.createElement("canvas").getContext("2d");
+        window._measureCtx.font = `${weight} ${fontSize}px ${family}`;
+        
+        for (const rawLine of rawLines) {
+          const words = rawLine.split(/\s+/);
+          let currentLine = words[0] || "";
+          for (let i = 1; i < words.length; i++) {
+            const word = words[i];
+            const width = window._measureCtx.measureText(currentLine + " " + word).width;
+            if (width <= rect.width + 4) {
+              currentLine += " " + word;
+            } else {
+              lines.push(currentLine);
+              currentLine = word;
+            }
+          }
+          if (currentLine) lines.push(currentLine);
+        }
+      } else {
+        lines = rawLines;
+      }
+
+      const parsedLh = parseFloat(styles.lineHeight);
+      const lh = isNaN(parsedLh) ? fontSize * 1.2 : parsedLh;
+      const initialBaselineY = rect.y + fontSize * 0.85; 
+
+      if (lines.length === 1) {
+        return `<text x="${rect.x}" y="${initialBaselineY}" font-family="${escapeXml(family)}" font-size="${fontSize}" font-weight="${escapeXml(weight)}" fill="${escapeXml(textColor)}" opacity="${finalOpacity}" xml:space="preserve">${escapeXml(lines[0])}</text>`;
+      }
+
+      let tspans = "";
+      for (let i = 0; i < lines.length; i++) {
+        tspans += `<tspan x="${rect.x}" y="${initialBaselineY + i * lh}">${escapeXml(lines[i])}</tspan>`;
+      }
+      return `<text font-family="${escapeXml(family)}" font-size="${fontSize}" font-weight="${escapeXml(weight)}" fill="${escapeXml(textColor)}" opacity="${finalOpacity}" xml:space="preserve">${tspans}</text>`;
+    }
+
+    if (node.image) {
+      if (rect.width <= 0 || rect.height <= 0) return "";
+      let aspectRatio = "none";
+      if (styles.objectFit === "cover") aspectRatio = "xMidYMid slice";
+      else if (styles.objectFit === "contain") aspectRatio = "xMidYMid meet";
+      return `<image x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" href="${escapeXml(node.image)}" xlink:href="${escapeXml(node.image)}" preserveAspectRatio="${aspectRatio}" opacity="${nodeOpacity}"/>`;
+    }
+
+    if (node.svg) {
+      const svgTagMatch = node.svg.match(/^<svg([^>]*)>/i);
+      const svgAttrs = svgTagMatch ? svgTagMatch[1] : "";
+      let rootGAttrs = "";
+      svgAttrs.replace(/(fill|stroke|color)=["']([^"']+)["']/ig, (match, attr, color) => {
+        if (color.toLowerCase() === "currentcolor" && styles.color) color = styles.color;
+        const { c, a } = formatColor(color);
+        if (c !== "none") rootGAttrs += ` ${attr}="${c}"` + (a < 1 ? ` ${attr}-opacity="${a}"` : "");
+      });
+      const inner = node.svg.replace(/^<svg[^>]*>/i, "").replace(/<\/svg>\s*$/i, "");
+      const viewBoxMatch = svgAttrs.match(/viewBox=["']([^"']+)["']/i);
+      const viewBox = viewBoxMatch ? viewBoxMatch[1] : `0 0 ${rect.width || 24} ${rect.height || 24}`;
+      const fixedInner = fixSvgColors(inner, styles.color);
+      return `<svg x="${rect.x}" y="${rect.y}" width="${Math.max(rect.width, 1)}" height="${Math.max(rect.height, 1)}" viewBox="${escapeXml(viewBox)}" preserveAspectRatio="none" opacity="${nodeOpacity}"><g${rootGAttrs}>${fixedInner}</g></svg>`;
+    }
+
+    if (node.tag === "mask_svg_icon" && node.maskSvg) {
+      const inner = node.maskSvg.replace(/^<svg[^>]*>/i, "").replace(/<\/svg>\s*$/i, "");
+      const viewBoxMatch = node.maskSvg.match(/viewBox=["']([^"']+)["']/i);
+      const viewBox = viewBoxMatch ? viewBoxMatch[1] : `0 0 ${rect.width || 24} ${rect.height || 24}`;
+      const iconResolvedColor = formatColor(node.iconColor || "#000");
+      const fixedInner = fixSvgColors(inner, node.iconColor);
+      return `<svg x="${rect.x}" y="${rect.y}" width="${Math.max(rect.width, 1)}" height="${Math.max(rect.height, 1)}" viewBox="${escapeXml(viewBox)}" preserveAspectRatio="none" opacity="${nodeOpacity * iconResolvedColor.a}"><g fill="${escapeXml(iconResolvedColor.c)}">${fixedInner}</g></svg>`;
+    }
+
+    let out = "";
+    const bg = styles.backgroundColor;
+    const hasBg = bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent";
+    const bt = num(styles.borderTopWidth), br = num(styles.borderRightWidth);
+    const bb = num(styles.borderBottomWidth), bl = num(styles.borderLeftWidth);
+    const maxBorder = Math.max(bt, br, bb, bl);
+    const hasBorder = maxBorder > 0 && styles.borderStyle && styles.borderStyle !== "none";
+    const hasShadow = styles.boxShadow && styles.boxShadow !== "none";
+    const radius = Math.max(
+      num(styles.borderTopLeftRadius), num(styles.borderTopRightRadius),
+      num(styles.borderBottomLeftRadius), num(styles.borderBottomRightRadius)
+    );
+
+    if ((hasBg || hasBorder) && rect.width > 0 && rect.height > 0) {
+      let filterAttr = "";
+      if (hasShadow && defsList) {
+        const m = styles.boxShadow.match(/(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px\s*(?:([\d.]+)px)?\s*(rgba?\([^)]+\)|#[0-9a-fA-F]{3,8})/);
+        if (m) {
+          const id = `shadow${svgDefsCounter++}`;
+          const [, dx, dy, blur, , color] = m;
+          const { c: shadowColor, a: shadowAlpha } = formatColor(color);
+          defsList.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${num(blur) / 2}" flood-color="${escapeXml(shadowColor)}" flood-opacity="${shadowAlpha}"/></filter>`);
+          filterAttr = ` filter="url(#${id})"`;
+        }
+      }
+      
+      const { c: bgColor, a: bgAlpha } = formatColor(hasBg ? bg : "none");
+      const { c: borderColor, a: borderAlpha } = formatColor(styles.borderColor || "#000");
+      
+      out += `<rect x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" rx="${radius}" ry="${radius}" fill="${escapeXml(bgColor)}" fill-opacity="${bgAlpha}"${hasBorder ? ` stroke="${escapeXml(borderColor)}" stroke-width="${maxBorder}" stroke-opacity="${borderAlpha}"` : ""} opacity="${nodeOpacity}"${filterAttr}/>`;
+    }
+
+    const bgImgStr = styles.backgroundImage;
+    if (bgImgStr && bgImgStr !== "none" && bgImgStr.startsWith("url(")) {
+      const match = bgImgStr.match(/^url\((["']?)(.*?)\1\)$/);
+      if (match && match[2]) {
+         let aspectRatio = "none";
+         if (styles.backgroundSize === "cover") aspectRatio = "xMidYMid slice";
+         else if (styles.backgroundSize === "contain") aspectRatio = "xMidYMid meet";
+         try {
+           const absUrl = new URL(match[2], location.href).href;
+           out += `<image x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" href="${escapeXml(absUrl)}" xlink:href="${escapeXml(absUrl)}" preserveAspectRatio="${aspectRatio}" opacity="${nodeOpacity}"/>`;
+         } catch(e) {}
+      }
+    }
+
+    for (const child of node.children || []) {
+      out += nodeToSvgFragment(child, defsList);
+    }
+    return out;
+  }
+
+  function treeToSVG(captureData) {
+    const root = captureData.root;
+    const width = Math.max(Math.round((root && root.rect && root.rect.width) || 0), 1);
+    const height = Math.max(Math.round((root && root.rect && root.rect.height) || 0), 1);
+    svgDefsCounter = 0;
+    const defsList = [];
+    const body = nodeToSvgFragment(root, defsList);
+    const defs = defsList.length ? `<defs>${defsList.join("")}</defs>` : "";
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${defs}${body}</svg>`;
+  }
+
   function captureElement(el) {
     nodeCount = 0;
     didShowTruncateToast = false;
@@ -485,6 +713,7 @@
   let downloadInsteadGlobal = false;
   let skipFormValuesGlobal = false;
   let reduceLayersGlobal = false;
+  let quickPasteGlobal = false;
   let viewportWidthGlobal = "";
   let onPicked = null;
 
@@ -559,23 +788,27 @@
     const target = e.target;
     stopPicking();
     const data = captureElement(target);
-    const json = JSON.stringify(data);
+    const tag = target.tagName.toLowerCase();
+    const vpSuffix = viewportWidthGlobal ? `-${viewportWidthGlobal}px` : "";
+    let host = "page";
+    try { host = new URL(location.href).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
+    const d = new Date();
+    const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
+
+    const output = quickPasteGlobal ? treeToSVG(data) : JSON.stringify(data);
+    const ext = quickPasteGlobal ? "svg" : "json";
+    const mime = quickPasteGlobal ? "image/svg+xml" : "application/json";
+
     if (downloadInsteadGlobal) {
-      const blob = new Blob([json], { type: "application/json" });
+      const blob = new Blob([output], { type: mime });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      let host = "page";
-      try { host = new URL(location.href).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
-      const d = new Date();
-      const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
-      const tag = target.tagName.toLowerCase();
-      const vpSuffix = viewportWidthGlobal ? `-${viewportWidthGlobal}px` : "";
-      a.download = `figcopy-${host}-${tag}${vpSuffix}-${time}.json`;
+      a.download = `figcopy-${host}-${tag}${vpSuffix}-${time}.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
       setTimeout(() => {
-        showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);
+        showToast(`Downloaded "${tag}" layout as ${ext.toUpperCase()}`);
       }, 50);
     } else {
       const doFallback = () => {
@@ -595,8 +828,10 @@
       };
 
       if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(json).then(() => {
-          showToast(`Copied "${target.tagName.toLowerCase()}" layout to clipboard!`);
+        navigator.clipboard.writeText(output).then(() => {
+          showToast(quickPasteGlobal
+            ? `Copied "${tag}" as SVG — paste directly into Figma!`
+            : `Copied "${tag}" layout to clipboard!`);
         }).catch(() => {
           doFallback();
         });
@@ -608,6 +843,7 @@
     didEmulateGlobal = false;
     downloadInsteadGlobal = false;
     reduceLayersGlobal = false;
+    quickPasteGlobal = false;
     viewportWidthGlobal = "";
     document.body.style.cursor = "";
     if (onPicked) onPicked(data);
@@ -686,6 +922,7 @@
     if (msg.type === "CAPTURE_FULL_PAGE") {
       skipFormValuesGlobal = msg.skipFormValues || false;
       reduceLayersGlobal = msg.reduceLayers || false;
+      quickPasteGlobal = msg.quickPaste || false;
       viewportWidthGlobal = msg.viewportWidth || "";
       (async () => {
         showToast("Scrolling to trigger animations…");
@@ -724,8 +961,11 @@
         document.body.style.scrollBehavior = origBodyBehavior;
 
         const data = captureElement(document.documentElement);
-        
-        sendResponse({ ok: true, data });
+        const output = quickPasteGlobal ? treeToSVG(data) : JSON.stringify(data);
+        const ext = quickPasteGlobal ? "svg" : "json";
+        const mime = quickPasteGlobal ? "image/svg+xml" : "application/json";
+
+        sendResponse({ ok: true, data, output, ext, mime, quickPaste: quickPasteGlobal });
       })();
       return true;
     }
@@ -734,6 +974,7 @@
       downloadInsteadGlobal = msg.downloadInstead || false;
       skipFormValuesGlobal = msg.skipFormValues || false;
       reduceLayersGlobal = msg.reduceLayers || false;
+      quickPasteGlobal = msg.quickPaste || false;
       viewportWidthGlobal = msg.viewportWidth || "";
       startPicking(() => {
         // Clipboard write already happened inside onClick, above.

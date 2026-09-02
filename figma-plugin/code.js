@@ -521,6 +521,15 @@ function applyCommonStyle(node, styles) {
   applyBoxShadow(node, styles.boxShadow);
 }
 
+function getScaleMode(domNode) {
+  let mode = domNode.tag === "img" ? "FILL" : "FIT";
+  if (domNode.styles) {
+    if (domNode.styles.objectFit === "contain") mode = "FIT";
+    else if (domNode.styles.objectFit === "cover") mode = "FILL";
+  }
+  return mode;
+}
+
 // domNode: captured node. originRect: the rect this node's x/y should be measured against
 // (its parent's captured rect), so Figma's parent-relative coordinates come out right.
 async function buildNode(domNode, originRect, bump, depth = 0) {
@@ -557,7 +566,7 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
         const buffer = await response.arrayBuffer();
         const bytes = new Uint8Array(buffer);
         const video = await figma.createVideoAsync(bytes);
-        node.fills = [{ type: "VIDEO", videoHash: video.hash, scaleMode: "FILL" }];
+        node.fills = [{ type: "VIDEO", videoHash: video.hash, scaleMode: getScaleMode(domNode) }];
         hasVideo = true;
       } catch (e) {}
     }
@@ -567,8 +576,7 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
         try {
           const bytes = await decodeImageSafe(domNode.image);
           const image = figma.createImage(bytes);
-          const scaleMode = domNode.tag === "img" ? "FILL" : "FIT";
-          node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
+          node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: getScaleMode(domNode) }];
         } catch (uiErr) {
           if (domNode.image.startsWith("http")) {
             try {
@@ -576,8 +584,7 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
               const buffer = await response.arrayBuffer();
               const bytes = new Uint8Array(buffer);
               const image = figma.createImage(bytes);
-              const scaleMode = domNode.tag === "img" ? "FILL" : "FIT";
-              node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
+              node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: getScaleMode(domNode) }];
             } catch (fetchErr) {
               node.fills = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.85 } }];
             }
@@ -832,9 +839,24 @@ async function buildNode(domNode, originRect, bump, depth = 0) {
           childNode.layoutPositioning = "ABSOLUTE";
           childNode.x = origX;
           childNode.y = origY;
-          if (shouldCenter) {
-            childNode.constraints = { horizontal: "CENTER", vertical: childNode.constraints.vertical || "TOP" };
-          }
+          
+          let hConstraint = "MIN"; // Left
+          let vConstraint = "MIN"; // Top
+          
+          const hasLeft = child.styles.left && child.styles.left !== "auto";
+          const hasRight = child.styles.right && child.styles.right !== "auto";
+          const hasTop = child.styles.top && child.styles.top !== "auto";
+          const hasBottom = child.styles.bottom && child.styles.bottom !== "auto";
+          
+          if (hasLeft && hasRight) hConstraint = "STRETCH";
+          else if (hasRight) hConstraint = "MAX";
+          
+          if (hasTop && hasBottom) vConstraint = "STRETCH";
+          else if (hasBottom) vConstraint = "MAX";
+          
+          if (shouldCenter) hConstraint = "CENTER";
+          
+          childNode.constraints = { horizontal: hConstraint, vertical: vConstraint };
         } catch(e) {}
       } else {
         const flexGrow = parseFloat(child.styles.flexGrow);
