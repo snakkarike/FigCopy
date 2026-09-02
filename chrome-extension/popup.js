@@ -108,11 +108,21 @@ checkEmulationState();
 const downloadCheck = document.getElementById("downloadCheck");
 const skipFormValuesCheck = document.getElementById("skipFormValuesCheck");
 const reduceLayersCheck = document.getElementById("reduceLayersCheck");
+const quickPasteCheck = document.getElementById("quickPasteCheck");
+const downloadLabel = document.getElementById("downloadLabel");
 
-chrome.storage.local.get(["downloadInstead", "skipFormValues", "reduceLayers"], (data) => {
+function updateDownloadLabel() {
+  downloadLabel.textContent = quickPasteCheck.checked
+    ? "Download SVG instead of copying"
+    : "Download JSON instead of copying";
+}
+
+chrome.storage.local.get(["downloadInstead", "skipFormValues", "reduceLayers", "quickPaste"], (data) => {
   downloadCheck.checked = !!data.downloadInstead;
   skipFormValuesCheck.checked = !!data.skipFormValues;
   reduceLayersCheck.checked = !!data.reduceLayers;
+  quickPasteCheck.checked = !!data.quickPaste;
+  updateDownloadLabel();
 });
 downloadCheck.addEventListener("change", () => {
   chrome.storage.local.set({ downloadInstead: downloadCheck.checked });
@@ -122,6 +132,10 @@ skipFormValuesCheck.addEventListener("change", () => {
 });
 reduceLayersCheck.addEventListener("change", () => {
   chrome.storage.local.set({ reduceLayers: reduceLayersCheck.checked });
+});
+quickPasteCheck.addEventListener("change", () => {
+  chrome.storage.local.set({ quickPaste: quickPasteCheck.checked });
+  updateDownloadLabel();
 });
 
 document.getElementById("emulateBtn").addEventListener("click", async () => {
@@ -159,10 +173,11 @@ document.getElementById("pickBtn").addEventListener("click", async () => {
   const downloadInstead = downloadCheck.checked;
   const skipFormValues = skipFormValuesCheck.checked;
   const reduceLayers = reduceLayersCheck.checked;
+  const quickPaste = quickPasteCheck.checked;
 
   setStatus("Click any element… (Esc to cancel)");
   const viewportWidth = getViewportWidth();
-  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead, skipFormValues, viewportWidth, reduceLayers }, () => {
+  chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", didEmulate, downloadInstead, skipFormValues, viewportWidth, reduceLayers, quickPaste }, () => {
     if (chrome.runtime.lastError) {}
     window.close();
   });
@@ -181,9 +196,10 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
   const downloadInstead = downloadCheck.checked;
   const skipFormValues = skipFormValuesCheck.checked;
   const reduceLayers = reduceLayersCheck.checked;
-  
+  const quickPaste = quickPasteCheck.checked;
   const viewportWidth = getViewportWidth();
-  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues, reduceLayers, viewportWidth }, async (response) => {
+
+  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues, reduceLayers, quickPaste, viewportWidth }, async (response) => {
     if (didEmulate) {
       chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
     }
@@ -193,10 +209,12 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
       return;
     }
     try {
-      const json = JSON.stringify(response.data);
+      const output = response.output;
+      const ext = response.ext || "json";
+      const mime = response.mime || "application/json";
       const vpSuffix = viewportWidth ? `-${viewportWidth}px` : "";
       if (downloadInstead) {
-        const blob = new Blob([json], { type: "application/json" });
+        const blob = new Blob([output], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -204,25 +222,29 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
         try { host = new URL(tab.url).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
         const d = new Date();
         const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
-        a.download = `figcopy-${host}-fullpage${vpSuffix}-${time}.json`;
+        a.download = `figcopy-${host}-fullpage${vpSuffix}-${time}.${ext}`;
         a.click();
         URL.revokeObjectURL(url);
-        setStatus(`Downloaded! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+        setStatus(`Downloaded! (${(output.length / 1024).toFixed(1)} KB)`, "ok");
       } else {
         try {
-          await navigator.clipboard.writeText(json);
-          setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+          await navigator.clipboard.writeText(output);
+          setStatus(response.quickPaste
+            ? `Copied as SVG! Paste into Figma. (${(output.length / 1024).toFixed(1)} KB)`
+            : `Copied! (${(output.length / 1024).toFixed(1)} KB)`, "ok");
         } catch (e) {
           setStatus("", "err");
           const btn = document.createElement("button");
-          btn.textContent = "Click to Copy JSON";
+          btn.textContent = response.quickPaste ? "Click to Copy SVG" : "Click to Copy JSON";
           btn.style.cssText = "padding: 2px 8px; font-size: 10px; cursor: pointer; background: var(--btn-bg); color: var(--btn-text); border: 1px solid var(--border); border-radius: 4px; margin-left: -5px;";
           btn.addEventListener("click", async () => {
             try {
-              await navigator.clipboard.writeText(json);
-              setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+              await navigator.clipboard.writeText(output);
+              setStatus(response.quickPaste
+                ? `Copied as SVG! Paste into Figma. (${(output.length / 1024).toFixed(1)} KB)`
+                : `Copied! (${(output.length / 1024).toFixed(1)} KB)`, "ok");
             } catch (err) {
-              setStatus("Copy failed. JSON might be too large.", "err");
+              setStatus("Copy failed. Output might be too large.", "err");
             }
           });
           document.getElementById("statusText").appendChild(btn);

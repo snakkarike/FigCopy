@@ -460,6 +460,111 @@
     return node;
   }
 
+  // ---------- Quick Paste: convert a captured tree straight to SVG ----------
+  // Lets a user paste directly onto the Figma canvas (Cmd/Ctrl+V) with no
+  // companion plugin. Coordinates in the tree are already absolute relative
+  // to the captured root (see `serialize`'s use of `originRect`), so no
+  // per-level transform accumulation is needed here — every primitive is
+  // emitted at its own rect directly.
+  function escapeXml(str) {
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  function num(v, fallback = 0) {
+    const n = parseFloat(v);
+    return isNaN(n) ? fallback : n;
+  }
+
+  let svgDefsCounter = 0;
+
+  function nodeToSvgFragment(node, defsList) {
+    if (!node) return "";
+    const styles = node.styles || {};
+    const rect = node.rect || { x: 0, y: 0, width: 0, height: 0 };
+
+    if (node.tag === "text_leaf") {
+      if (!node.text) return "";
+      const fontSize = num(styles.fontSize, 14);
+      const color = styles.color || "#000000";
+      const weight = styles.fontWeight || "400";
+      const family = (styles.fontFamily || "sans-serif").split(",")[0].replace(/["']/g, "").trim();
+      const opacity = styles.opacity !== undefined ? styles.opacity : 1;
+      const baselineY = rect.y + fontSize * 0.85; // approximate cap-height baseline
+      return `<text x="${rect.x}" y="${baselineY}" font-family="${escapeXml(family)}" font-size="${fontSize}" font-weight="${escapeXml(weight)}" fill="${escapeXml(color)}" opacity="${opacity}" xml:space="preserve">${escapeXml(node.text)}</text>`;
+    }
+
+    if (node.image) {
+      if (rect.width <= 0 || rect.height <= 0) return "";
+      return `<image x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" href="${escapeXml(node.image)}" preserveAspectRatio="none"/>`;
+    }
+
+    if (node.svg) {
+      const inner = node.svg.replace(/^<svg[^>]*>/i, "").replace(/<\/svg>\s*$/i, "");
+      const viewBoxMatch = node.svg.match(/viewBox="([^"]+)"/i);
+      const viewBox = viewBoxMatch ? viewBoxMatch[1] : `0 0 ${rect.width || 24} ${rect.height || 24}`;
+      return `<svg x="${rect.x}" y="${rect.y}" width="${Math.max(rect.width, 1)}" height="${Math.max(rect.height, 1)}" viewBox="${escapeXml(viewBox)}" preserveAspectRatio="none">${inner}</svg>`;
+    }
+
+    if (node.tag === "mask_svg_icon" && node.maskSvg) {
+      const inner = node.maskSvg.replace(/^<svg[^>]*>/i, "").replace(/<\/svg>\s*$/i, "");
+      const viewBoxMatch = node.maskSvg.match(/viewBox="([^"]+)"/i);
+      const viewBox = viewBoxMatch ? viewBoxMatch[1] : `0 0 ${rect.width || 24} ${rect.height || 24}`;
+      return `<svg x="${rect.x}" y="${rect.y}" width="${Math.max(rect.width, 1)}" height="${Math.max(rect.height, 1)}" viewBox="${escapeXml(viewBox)}" preserveAspectRatio="none"><g fill="${escapeXml(node.iconColor || "#000")}">${inner}</g></svg>`;
+    }
+
+    let out = "";
+    const bg = styles.backgroundColor;
+    const hasBg = bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent";
+    const bt = num(styles.borderTopWidth), br = num(styles.borderRightWidth);
+    const bb = num(styles.borderBottomWidth), bl = num(styles.borderLeftWidth);
+    const maxBorder = Math.max(bt, br, bb, bl);
+    const hasBorder = maxBorder > 0 && styles.borderStyle && styles.borderStyle !== "none";
+    const hasShadow = styles.boxShadow && styles.boxShadow !== "none";
+    const radius = Math.max(
+      num(styles.borderTopLeftRadius), num(styles.borderTopRightRadius),
+      num(styles.borderBottomLeftRadius), num(styles.borderBottomRightRadius)
+    );
+    const opacity = styles.opacity !== undefined ? styles.opacity : 1;
+
+    if ((hasBg || hasBorder) && rect.width > 0 && rect.height > 0) {
+      let filterAttr = "";
+      if (hasShadow && defsList) {
+        // Only the first shadow layer is approximated — SVG has no direct
+        // multi-shadow equivalent to CSS's comma-separated box-shadow list.
+        const m = styles.boxShadow.match(/(-?[\d.]+)px\s+(-?[\d.]+)px\s+([\d.]+)px\s*(?:([\d.]+)px)?\s*(rgba?\([^)]+\)|#[0-9a-fA-F]{3,8})/);
+        if (m) {
+          const id = `shadow${svgDefsCounter++}`;
+          const [, dx, dy, blur, , color] = m;
+          defsList.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${num(blur) / 2}" flood-color="${escapeXml(color)}"/></filter>`);
+          filterAttr = ` filter="url(#${id})"`;
+        }
+      }
+      out += `<rect x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" rx="${radius}" ry="${radius}" fill="${hasBg ? escapeXml(bg) : "none"}"${hasBorder ? ` stroke="${escapeXml(styles.borderColor || "#000")}" stroke-width="${maxBorder}"` : ""} opacity="${opacity}"${filterAttr}/>`;
+    }
+
+    for (const child of node.children || []) {
+      out += nodeToSvgFragment(child, defsList);
+    }
+    return out;
+  }
+
+  function treeToSVG(captureData) {
+    const root = captureData.root;
+    const width = Math.max(Math.round((root && root.rect && root.rect.width) || 0), 1);
+    const height = Math.max(Math.round((root && root.rect && root.rect.height) || 0), 1);
+    svgDefsCounter = 0;
+    const defsList = [];
+    const body = nodeToSvgFragment(root, defsList);
+    const defs = defsList.length ? `<defs>${defsList.join("")}</defs>` : "";
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${defs}${body}</svg>`;
+  }
+
   function captureElement(el) {
     nodeCount = 0;
     didShowTruncateToast = false;
@@ -485,6 +590,7 @@
   let downloadInsteadGlobal = false;
   let skipFormValuesGlobal = false;
   let reduceLayersGlobal = false;
+  let quickPasteGlobal = false;
   let viewportWidthGlobal = "";
   let onPicked = null;
 
@@ -559,23 +665,27 @@
     const target = e.target;
     stopPicking();
     const data = captureElement(target);
-    const json = JSON.stringify(data);
+    const tag = target.tagName.toLowerCase();
+    const vpSuffix = viewportWidthGlobal ? `-${viewportWidthGlobal}px` : "";
+    let host = "page";
+    try { host = new URL(location.href).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
+    const d = new Date();
+    const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
+
+    const output = quickPasteGlobal ? treeToSVG(data) : JSON.stringify(data);
+    const ext = quickPasteGlobal ? "svg" : "json";
+    const mime = quickPasteGlobal ? "image/svg+xml" : "application/json";
+
     if (downloadInsteadGlobal) {
-      const blob = new Blob([json], { type: "application/json" });
+      const blob = new Blob([output], { type: mime });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      let host = "page";
-      try { host = new URL(location.href).hostname.replace(/[^a-z0-9]/gi, '-'); } catch(e) {}
-      const d = new Date();
-      const time = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
-      const tag = target.tagName.toLowerCase();
-      const vpSuffix = viewportWidthGlobal ? `-${viewportWidthGlobal}px` : "";
-      a.download = `figcopy-${host}-${tag}${vpSuffix}-${time}.json`;
+      a.download = `figcopy-${host}-${tag}${vpSuffix}-${time}.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
       setTimeout(() => {
-        showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);
+        showToast(`Downloaded "${tag}" layout as ${ext.toUpperCase()}`);
       }, 50);
     } else {
       const doFallback = () => {
@@ -595,8 +705,10 @@
       };
 
       if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(json).then(() => {
-          showToast(`Copied "${target.tagName.toLowerCase()}" layout to clipboard!`);
+        navigator.clipboard.writeText(output).then(() => {
+          showToast(quickPasteGlobal
+            ? `Copied "${tag}" as SVG — paste directly into Figma!`
+            : `Copied "${tag}" layout to clipboard!`);
         }).catch(() => {
           doFallback();
         });
@@ -608,6 +720,7 @@
     didEmulateGlobal = false;
     downloadInsteadGlobal = false;
     reduceLayersGlobal = false;
+    quickPasteGlobal = false;
     viewportWidthGlobal = "";
     document.body.style.cursor = "";
     if (onPicked) onPicked(data);
@@ -686,6 +799,7 @@
     if (msg.type === "CAPTURE_FULL_PAGE") {
       skipFormValuesGlobal = msg.skipFormValues || false;
       reduceLayersGlobal = msg.reduceLayers || false;
+      quickPasteGlobal = msg.quickPaste || false;
       viewportWidthGlobal = msg.viewportWidth || "";
       (async () => {
         showToast("Scrolling to trigger animations…");
@@ -724,8 +838,11 @@
         document.body.style.scrollBehavior = origBodyBehavior;
 
         const data = captureElement(document.documentElement);
-        
-        sendResponse({ ok: true, data });
+        const output = quickPasteGlobal ? treeToSVG(data) : JSON.stringify(data);
+        const ext = quickPasteGlobal ? "svg" : "json";
+        const mime = quickPasteGlobal ? "image/svg+xml" : "application/json";
+
+        sendResponse({ ok: true, data, output, ext, mime, quickPaste: quickPasteGlobal });
       })();
       return true;
     }
@@ -734,6 +851,7 @@
       downloadInsteadGlobal = msg.downloadInstead || false;
       skipFormValuesGlobal = msg.skipFormValues || false;
       reduceLayersGlobal = msg.reduceLayers || false;
+      quickPasteGlobal = msg.quickPaste || false;
       viewportWidthGlobal = msg.viewportWidth || "";
       startPicking(() => {
         // Clipboard write already happened inside onClick, above.

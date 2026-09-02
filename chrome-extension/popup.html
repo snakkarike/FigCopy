@@ -288,7 +288,7 @@
     </div>
 
     <div class="body">
-      <p class="sub">Capture an element or the full page, then paste the JSON or drag & drop the downloaded file into the Figma plugin.</p>
+      <p class="sub">Capture an element or the full page, then paste the JSON into the Figma plugin — or enable Quick Paste below to paste straight onto the Figma canvas with no plugin.</p>
 
       <div class="select-wrap">
         <label>Viewport Width</label>
@@ -340,8 +340,15 @@
       </div>
 
       <div class="settings-wrap" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border)">
-        <label class="toggle-wrap">
-          <span>Download JSON instead of copying</span>
+        <label class="toggle-wrap" title="Copies SVG you can paste (Cmd/Ctrl+V) straight onto the Figma canvas — no plugin needed. Lower fidelity than the plugin build: no real Auto Layout, editable text, or named layers.">
+          <span>Quick Paste (SVG, no plugin)</span>
+          <div class="toggle-switch">
+            <input type="checkbox" id="quickPasteCheck" />
+            <span class="slider"></span>
+          </div>
+        </label>
+        <label class="toggle-wrap" id="downloadWrap">
+          <span id="downloadLabel">Download JSON instead of copying</span>
           <div class="toggle-switch">
             <input type="checkbox" id="downloadCheck" />
             <span class="slider"></span>
