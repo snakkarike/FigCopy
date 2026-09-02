@@ -182,7 +182,8 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
   const skipFormValues = skipFormValuesCheck.checked;
   const reduceLayers = reduceLayersCheck.checked;
   
-  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues, reduceLayers, viewportWidth: getViewportWidth() }, async (response) => {
+  const viewportWidth = getViewportWidth();
+  chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_FULL_PAGE", skipFormValues, reduceLayers, viewportWidth }, async (response) => {
     if (didEmulate) {
       chrome.runtime.sendMessage({ type: "STOP_EMULATION", tabId: tab.id });
     }
@@ -208,11 +209,28 @@ document.getElementById("fullPageBtn").addEventListener("click", async () => {
         URL.revokeObjectURL(url);
         setStatus(`Downloaded! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
       } else {
-        await navigator.clipboard.writeText(json);
-        setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+        try {
+          await navigator.clipboard.writeText(json);
+          setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+        } catch (e) {
+          setStatus("", "err");
+          const btn = document.createElement("button");
+          btn.textContent = "Click to Copy JSON";
+          btn.style.cssText = "padding: 2px 8px; font-size: 10px; cursor: pointer; background: var(--btn-bg); color: var(--btn-text); border: 1px solid var(--border); border-radius: 4px; margin-left: -5px;";
+          btn.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(json);
+              setStatus(`Copied! (${(json.length / 1024).toFixed(1)} KB)`, "ok");
+            } catch (err) {
+              setStatus("Copy failed. JSON might be too large.", "err");
+            }
+          });
+          document.getElementById("statusText").appendChild(btn);
+        }
       }
     } catch (e) {
-      setStatus("Captured, but write failed.", "err");
+      setStatus("Captured, but write failed. " + (e.message || String(e)), "err");
+      console.error(e);
     }
   });
 });

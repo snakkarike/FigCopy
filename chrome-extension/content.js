@@ -578,14 +578,30 @@
         showToast(`Downloaded "${target.tagName.toLowerCase()}" layout as JSON`);
       }, 50);
     } else {
+      const doFallback = () => {
+        const textarea = document.createElement("textarea");
+        textarea.value = json;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const success = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (success) {
+          showToast(`Copied "${target.tagName.toLowerCase()}" layout to clipboard!`);
+        } else {
+          showToast("Clipboard write failed. Check console.", "err");
+        }
+      };
+
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(json).then(() => {
           showToast(`Copied "${target.tagName.toLowerCase()}" layout to clipboard!`);
         }).catch(() => {
-          showToast("Clipboard write failed. Check console.", "err");
+          doFallback();
         });
       } else {
-        showToast("Clipboard API unavailable. Check console.", "err");
+        doFallback();
       }
     }
     
